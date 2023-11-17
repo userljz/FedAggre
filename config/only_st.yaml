@@ -1,0 +1,26 @@
+logfile_info: '1115_UseLargestVar'
+client_dataset: 'cifar10'
+server_dataset: 'cifar100'
+st_weight: 1
+
+num_clients: 10
+batch_size: 64
+dirichlet_alpha: 0.1
+round: 5
+num_class: 10
+client_model: 'resnet18'
+server_model: 'resnet50'
+local_epoch: 10
+seed: 42
+device: 'cuda'
+client_resource: {"num_gpus": 1, "num_cpus": 4}
+
+distill_epoch: 5
+dataset_path: "../dataset"
+wandb_project: '20231115'
+distill_lr: 0.01
+use_softmax_to_distill: 1
+wandb: 1
+save_client_model: 1
+
+

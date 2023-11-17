@@ -1,0 +1,17 @@
+logfile_info: '1104_fedavg_CIFAR100'
+client_dataset: 'cifar100'
+num_class: 100
+
+num_clients: 10
+batch_size: 32 
+dirichlet_alpha: 0.1
+round: 10
+
+client_model: 'resnet18'
+local_epoch: 15
+
+dataset_path: "../dataset"
+wandb_project: '1104_fedavg'
+
+
+

@@ -1,0 +1,7 @@
+st_weight: 1
+server_dataset: 'cifar100'
+client_dataset: 'cifar100'
+num_class: 100
+logfile_info: '1104_onlyST_Cifar100LongEpoch'
+distill_lr: 0.001
+distill_epoch: 150
