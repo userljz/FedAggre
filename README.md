@@ -2,8 +2,6 @@ File tree should be like this:
 
 CLIP
 
-dataset
+dataset: cifar-10-python.tar.gz
 
-    cifar-10-python.tar.gz
-    
 FedAggre
