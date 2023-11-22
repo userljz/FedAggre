@@ -1,10 +1,9 @@
 import os
+import sys
 from collections import OrderedDict
 from typing import List, Optional, Tuple
 from addict import Dict
 from utils.log_utils import cus_logger
-
-
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,84 +16,125 @@ import torchvision.models as models
 from torch.utils.data import DataLoader, random_split, Subset
 
 import flwr as fl
-from flwr.common import Metrics
+import wandb
+
+class SupConLoss(nn.Module):
+    """Supervised Contrastive Learning:.
+It also supports the unsupervised contrastive loss in SimCLR"""
+
+    def __init__(self, args, text_emb):
+        super(SupConLoss, self).__init__()
+        self.args = args
+        self.text_emb = text_emb  # text_emb: embedding of different classes [num_class, image_feats]
+
+    def forward(self, features, labels=None):
+        """
+        Args:
+            features: hidden vector of shape [bsz, image_feats].
+            labels: ground truth of shape [bsz].
+
+        Returns:
+            A loss scalar.
+        """
+        # --- generate one-hot target ---
+        num_classes = self.args.cfg.num_class
+        target = F.one_hot(labels, num_classes).to(self.args.device)
+
+        image_features = features / features.norm(dim=1, keepdim=True)
+        image_features = image_features.float()
+        logits_per_image = 100 * image_features @ self.text_emb.t()  # [bsz, num_class]
+        logits_per_image = logits_per_image / logits_per_image.norm(dim=-1, keepdim=True)
+        logits_per_image = torch.where(target == 1, 1 - logits_per_image, logits_per_image - self.args.cfg.margin)
+        logits_per_image = torch.clamp(logits_per_image, min=0)
+        loss = torch.sum(logits_per_image)  # [1,]
+
+        return loss
 
 
+def train(args, train_loader, model, criterion, optimizer, epoch, cid):
+    """one epoch training"""
+
+    losses = AverageMeter()
+
+    for idx, (images, labels) in enumerate(train_loader):
+        images, labels = images.to(args.device), labels.to(args.device)
+
+        # compute loss
+        features = model.get_img_feat(images)
+        loss = criterion(features, labels)
+
+        # update metric
+        bsz = labels.shape[0]
+        losses.update(loss.item(), bsz)
+
+        # SGD
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # print info
+        # if (idx + 1) % 100 == 0:
+        #     custom_logger.info(f'Cid{cid}Train: [{epoch}][{idx + 1}/{len(train_loader)}]\t loss {losses.val:.3f} ({losses.avg:.3f})')
+        #     sys.stdout.flush()
+
+    return losses.avg
 
 
-# class Net(nn.Module):
-#     def __init__(self) -> None:
-#         super(Net, self).__init__()
-#         self.conv1 = nn.Conv2d(3, 6, 5)
-#         self.pool = nn.MaxPool2d(2, 2)
-#         self.conv2 = nn.Conv2d(6, 16, 5)
-#         self.fc1 = nn.Linear(16 * 5 * 5, 120)
-#         self.fc2 = nn.Linear(120, 84)
-#         self.fc3 = nn.Linear(84, 10)
-
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         x = self.pool(F.relu(self.conv1(x)))
-#         x = self.pool(F.relu(self.conv2(x)))
-#         x = x.view(-1, 16 * 5 * 5)
-#         x = F.relu(self.fc1(x))
-#         x = F.relu(self.fc2(x))
-#         x = self.fc3(x)
-#         return x
-
-def train(args, net, cid, trainloader, epochs: int, verbose=False):
-    """Train the network on the training set."""
-    DEVICE = args.cfg.device
-    custom_logger = cus_logger(args, __name__)
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(net.parameters())
-    net.train()
-    for epoch in range(epochs):
-        correct, total, epoch_loss = 0, 0, 0.0
-        for images, labels in trainloader:
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            stem, rb1, rb2, rb3, feat, outputs = net(images)
-            loss = criterion(outputs, labels)
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            # Metrics
-            epoch_loss += loss
-            total += labels.size(0)
-            correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
-        epoch_loss /= len(trainloader.dataset)
-        epoch_acc = correct / total
-        custom_logger.info(f"Train_Client{cid}:[{epoch+1}/{epochs}], Train_loss:{epoch_loss}, Accu:{epoch_acc}, DataLength:{len(trainloader.dataset)}")
-
-
-def test(args, net, testloader):
+def test(args, net, testloader, criterion):
     """Evaluate the network on the entire test set."""
-    # print('********** enter test in fl_utils **********')
-    DEVICE = args.cfg.device
-    criterion = torch.nn.CrossEntropyLoss()
-    correct, total, loss = 0, 0, 0.0
+    losses = AverageMeter()
+    correct, total = 0, 0
     net.eval()
     with torch.no_grad():
         for images, labels in testloader:
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            stem, rb1, rb2, rb3, feat, outputs = net(images)
-            loss += criterion(outputs, labels).item()
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    loss /= len(testloader.dataset)
-    accuracy = correct / total
-    return loss, accuracy
+            images, labels = images.to(args.device), labels.to(args.device)
+            features = net.get_img_feat(images)
 
-def get_parameters(net) -> List[np.ndarray]:
-    return [val.cpu().numpy() for _, val in net.state_dict().items()]
+            loss = criterion(features, labels)
+            losses.update(loss, labels.shape[0])
+
+            # similarity = F.cosine_similarity(features.unsqueeze(1), args.text_emb.unsqueeze(0), dim=2)
+            similarity = features @ (args.text_emb.t())
+            _, predicted_indices = torch.max(similarity, dim=1)
+            total += labels.shape[0]
+            correct += (predicted_indices == labels).sum().item()
+
+    _accuracy = correct / total
+    return losses.avg, _accuracy
 
 
-def set_parameters(net, parameters: List[np.ndarray]):
-    params_dict = zip(net.state_dict().keys(), parameters)
-    # state_dict = OrderedDict({k: torch.Tensor(v) for k, v in params_dict})
-    state_dict = OrderedDict({k: torch.from_numpy(v) for k, v in params_dict})
-    net.load_state_dict(state_dict, strict=True)
+def get_parameters(net):
+    ret = []
+    for name, val in net.state_dict().items():
+        if 'fc_cus' in name:
+            ret.append(val.cpu().numpy())
+    return ret
+
+
+def set_parameters(net, parameters):
+    # params_dict = zip(net.state_dict().keys(), parameters)
+    # # state_dict = OrderedDict     ({k: torch.Tensor(v) for k, v in params_dict})
+    # state_dict = OrderedDict({k: torch.from_numpy(v) for k, v in params_dict})
+    # net.load_state_dict(state_dict, strict=True)
+    # return net
+    """
+    :param net: CLIP(with pretrained params) + fc_cus(random initialized)
+    :param parameters: Only include the last layer fc_cus, dict
+    :return: CLIP with new params loaded in
+    """
+    fc_key = []
+    for k in net.state_dict().keys():
+        if 'fc_cus' in k:
+            fc_key.append(k)
+    parameters = [torch.from_numpy(p) for p in parameters]
+
+    params_dict = dict(zip(fc_key, parameters))
+    # print(f'{params_dict = }')
+    # for k,v in params_dict.items():
+    #     print(f'{v.dtype=}')
+    pretrain_dict = net.state_dict()
+    pretrain_dict.update(params_dict)
+    net.load_state_dict(pretrain_dict)
     return net
 
 
@@ -108,27 +148,50 @@ class FlowerClient(fl.client.NumPyClient):
         self.client_logger = cus_logger(args, 'client_logger')
         label_counts = self.count_labels(trainloader)
         self.client_logger.info(f'Cid_{self.cid}, label_counts:{label_counts}')
+        self.criterion = SupConLoss(self.args, self.args.text_emb)
+        wandb.init(project=args.cfg["wandb_project"], name=args.cfg["logfile_info"], config=args.cfg)
 
     def get_parameters(self, config):
         return get_parameters(self.net)
 
     def fit(self, parameters, config):
-        set_parameters(self.net, parameters)
-        train(self.args, self.net, self.cid, self.trainloader, epochs=self.args.cfg.local_epoch, verbose=True)
-        loss, accuracy = test(self.args, self.net, self.valloader)
+        # print(f'Flower Client Params: {parameters}')
+        model = set_parameters(self.net, parameters)
+
+        # self.criterion = SupConLoss(self.args, self.args.text_emb)
+        model.cus_train()
+        pg = [p for p in model.parameters() if p.requires_grad]
+        optimizer = torch.optim.SGD(pg,
+                                    lr=float(self.args.cfg.local_lr),
+                                    momentum=float(self.args.cfg.local_momentum),
+                                    weight_decay=float(self.args.cfg.local_weight_decay))
+
+        # ------ train multiple epochs ------
+        for epoch in range(1, self.args.cfg.local_epoch + 1):
+            loss = train(self.args, self.trainloader, self.net, self.criterion, optimizer, epoch, self.cid)
+            self.client_logger.info(
+                f"Train_Client{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Train_loss:{loss}, DataLength:{len(self.trainloader.dataset)}")
+            wandb.log({f"Train_Client{self.cid}|Train_loss:": loss})
+
+        # ------ test accuracy after training ------
+        loss, accuracy = test(self.args, self.net, self.valloader, self.criterion)
         self.client_logger.info(f'Val_Client_{self.cid}, Accu:{accuracy}')
+        wandb.log({f"Val_Client{self.cid}|Accu:": accuracy})
+
+        # ------ save client model ------
         if self.args.cfg.save_client_model == 1:
             torch.save(self.net, f"./save_client_model/client_{self.cid}.pth")
             self.client_logger.info(f'Finish saving client model {self.cid}')
+
         return get_parameters(self.net), len(self.trainloader), {}
 
     def evaluate(self, parameters, config):
         self.client_logger.info('********** enter evaluate of FlowerClient **********')
         set_parameters(self.net, parameters)
-        loss, accuracy = test(self.args, self.net, self.valloader)
-        self.client_logger.info(f'Cid:{self.cid}, Accu:{float(accuracy)}, Val_length:{len(self.valloader)}') # ljz
-        return float(loss), len(self.valloader), {"accuracy": float(accuracy), 'test':12138} #ljz
-    
+        loss, _accuracy = test(self.args, self.net, self.valloader, self.criterion)
+        self.client_logger.info(f'Cid:{self.cid}, Accu:{float(_accuracy)}, Test_length:{len(self.valloader)}')  # ljz
+        return float(loss), len(self.valloader), {"accuracy": float(_accuracy), 'test': 12138}  # ljz
+
     def count_labels(self, data_loader):
         # Initialize a counter dictionary
         label_counts = {}
@@ -146,61 +209,20 @@ class FlowerClient(fl.client.NumPyClient):
         return label_counts
 
 
-
-# def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
-#     # Multiply accuracy of each client by number of examples used
-#     accuracies = [num_examples * m["accuracy"] for num_examples, m in metrics]
-#     examples = [num_examples for num_examples, _ in metrics]
-#     print('metrics: ', metrics) # ljz
-#     # Aggregate and return custom metric (weighted average)
-#     return {"accuracy": sum(accuracies) / sum(examples)}
-
-
-
 class AverageMeter(object):
-	def __init__(self):
-		self.reset()
+    def __init__(self):
+        self.reset()
 
-	def reset(self):
-		self.val   = 0
-		self.avg   = 0
-		self.sum   = 0
-		self.count = 0
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
 
-	def update(self, val, n=1):
-		self.val   = val
-		self.sum   += val * n
-		self.count += n
-		self.avg   = self.sum / self.count
-
-def accuracy(output, target, topk=(1,)):
-	"""Computes the precision@k for the specified values of k"""
-	maxk = max(topk)
-	batch_size = target.size(0)
-
-	_, pred = output.topk(maxk, 1, True, True)
-	pred    = pred.t()
-	correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-	res = []
-	for k in topk:
-		correct_k = correct[:k].reshape(-1).float().sum(0)
-		res.append(correct_k.mul_(100.0 / batch_size))
-	return res
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
 
 
-class SoftTarget(nn.Module):
-	'''
-	Distilling the Knowledge in a Neural Network
-	https://arxiv.org/pdf/1503.02531.pdf
-	'''
-	def __init__(self, T):
-		super(SoftTarget, self).__init__()
-		self.T = T
-
-	def forward(self, out_s, out_t):
-		loss = F.kl_div(F.log_softmax(out_s/self.T, dim=1),
-						F.softmax(out_t/self.T, dim=1),
-						reduction='batchmean') * self.T * self.T
-
-		return loss

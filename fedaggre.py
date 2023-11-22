@@ -27,22 +27,16 @@ from utils.fl_utils import FlowerClient, test, get_parameters, set_parameters
 from utils.data_utils import load_dataloader
 from utils.log_utils import cus_logger
 
-from network import define_tsnet
-from custom_strategy import FedCustom
-
+from network import ClipModel
+import wandb
 
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--yaml_name', type=str, default='basic.yaml', help='config file name')
-parser.add_argument('--round', type=int, help='num of communication round between server and clients')
-parser.add_argument('--num_clients', type=int)
-parser.add_argument('--batch_size', type=int)
-parser.add_argument('--dirichlet_alpha', type=float)
-parser.add_argument('--num_class', type=int)
-parser.add_argument('--client_model', type=str)
-parser.add_argument('--server_model', type=str)
-parser.add_argument('--distill_lr', type=float)
+parser.add_argument('--margin', type=float)
+parser.add_argument('--use_mlp', type=int)
+parser.add_argument('--local_lr', type=float)
 parser.add_argument('--logfile_info', type=str)
 args = parser.parse_args()
 args_command = vars(args)
@@ -59,8 +53,10 @@ for k,v in args_command.items():
         args.cfg[k] = v
 
 # ------wandb config------
+wandb.init(project=args.cfg["wandb_project"], name=args.cfg["logfile_info"], config=args.cfg)
 if args.cfg.wandb == 0:
     os.environ['WANDB_MODE'] = 'dryrun'
+
 
 # ------log config------
 log_name = f'{cfg.logfile_info}_{cfg.client_model}_{cfg.server_model}_{cfg.round}_{cfg.num_clients}_{cfg.client_dataset}'
@@ -69,7 +65,7 @@ logger1 = cus_logger(args, __name__, m='w')
 
 # ------device config------
 DEVICE = torch.device(args.cfg.device)
-args.DEVICE = DEVICE
+args.device = DEVICE
 
 # ------start training------
 logger1.info(f"-------------------------------------------Start a New------------------------------------------------")
@@ -78,37 +74,58 @@ logger1.info(f"Training on {DEVICE} using PyTorch {torch.__version__} and Flower
 print_dict(args)
 
 # ------Initialize client model------
-args.net = define_tsnet(args, args.cfg.client_model, args.cfg.num_class)
+model_name = args.cfg.model_name
+clip_model = ClipModel(args, model_name)
 client_resources = args.cfg.client_resource
 
+# ------Initialize CLIP text emb------
+class_name = ['an Airplane', 'an Automobile', 'a Bird', 'a Cat', 'a Deer',
+              'a Dog', 'a Frog', 'a Horse', 'a Ship', 'a Truck']
+text_emb = clip_model.get_text_feat(class_name)
+text_emb = text_emb / text_emb.norm(dim=1, keepdim=True)
+args.text_emb = text_emb.float()
+
+
 # ------Initialize dataloader------
-# trainloaders = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=0, dataloader_num=args.cfg.num_clients)
-# _, valloaders, testloader = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=1, dataloader_num=args.cfg.num_clients)
-trainloaders, valloaders = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=0, dataloader_num=args.cfg.num_clients)
+train_loaders, val_loaders = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=0, dataloader_num=args.cfg.num_clients)
 _, _, testloader = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=1, dataloader_num=args.cfg.num_clients)
 
-trainloader_d, _ = load_dataloader(args, cfg.server_dataset, cfg.dataset_path, is_iid=1, dataloader_num=1) # _d means distillation
-_, testloader_d = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=1, dataloader_num=1) # _d means distillation
+args.trainloaders, args.valloaders, args.testloader = train_loaders, val_loaders, testloader
 
-args.trainloaders, args.valloaders, args.testloader, args.trainloader_d, args.testloader_d = trainloaders, valloaders, testloader, trainloader_d, testloader_d
 
 def client_fn(cid: str) -> FlowerClient:
     """Create a Flower client representing a single organization."""
-    _trainloader = trainloaders[int(cid)]
-    _valloader = valloaders[int(cid)]
-    return FlowerClient(cid, args.net, _trainloader, _valloader, args)
+    _trainloader = train_loaders[int(cid)]
+    _valloader = val_loaders[int(cid)]
+    _model = ClipModel(args, model_name)
+    return FlowerClient(cid, _model, _trainloader, _valloader, args)
 
+def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
+    # Multiply accuracy of each client by number of examples used
+    # metrics is the return value of evaluate func of the FlowerClient
+    accuracies = [num_examples * m["accuracy"] for num_examples, m in metrics]
+    examples = [num_examples for num_examples, _ in metrics]
 
+    accu = sum(accuracies) / sum(examples)
+    # logger1.info(f'*** in weighted_average ***')
+    # logger1.info(f'{metrics=}')
+    logger1.info(f'*** in weighted_average *** {accu=}')
+    wandb.log({f"Weighted_average accuracy": accu})
+    return {"accuracy": accu}
+
+strategy = fl.server.strategy.FedAvg(
+    fraction_fit=1.0,  # Sample 100% of available clients for training
+    fraction_evaluate=1.0,  # Sample 100% of available clients for evaluation
+    evaluate_metrics_aggregation_fn=weighted_average
+)
 
 fl.simulation.start_simulation(
     client_fn=client_fn,
     num_clients=args.cfg.num_clients,
     config=fl.server.ServerConfig(num_rounds=args.cfg.round),
-    strategy=FedCustom(args=args),  # <-- pass the new strategy here
     client_resources=client_resources,
+    strategy=strategy
 )
 
 
 logger1.info(f"-------------------------------------------End All------------------------------------------------")
-
-# on branch v1

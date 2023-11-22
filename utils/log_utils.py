@@ -1,10 +1,12 @@
 import logging
-
+import os
 def cus_logger(args, name, m='a'):
     custom_logger = logging.getLogger(name)
     custom_logger.setLevel(logging.DEBUG)
     custom_logger.handlers.clear()
 
+    if not os.path.exists('log'):
+        os.makedirs('log')
     fh = logging.FileHandler(f'./log/{args.log_name}.txt', mode=m)
     log_format = "[%(filename)s:%(lineno)d] %(message)s"
     fh.setFormatter(logging.Formatter(log_format))

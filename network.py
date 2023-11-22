@@ -4,366 +4,46 @@ from __future__ import division
 import torch
 import torch.nn as nn
 
-
-def define_tsnet(args, name, num_class):
-	if name == 'resnet20':
-		net = resnet20(num_class=num_class).to(args.cfg.device)
-	elif name == 'resnet110':
-		net = resnet110(num_class=num_class).to(args.cfg.device)
-	elif name == 'resnet18':
-		net = resnet18(num_class=num_class).to(args.cfg.device)
-	elif name == 'resnet34':
-		net = resnet34(num_class=num_class).to(args.cfg.device)
-	elif name == 'resnet50':
-		net = resnet_n(num_class=num_class, n=50).to(args.cfg.device)
-	else:
-		raise Exception('model name does not exist.')
-
-	# if cuda:
-	# 	net = torch.nn.DataParallel(net).cuda()
-	# else:
-	# 	net = torch.nn.DataParallel(net)
-
-	return net
+import sys
+sys.path.insert(0, '../CLIP')
+import clip
 
 
-class resblock(nn.Module):
-	def __init__(self, in_channels, out_channels, return_before_act):
-		super(resblock, self).__init__()
-		self.return_before_act = return_before_act
-		self.downsample = (in_channels != out_channels)
-		if self.downsample:
-			self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False)
-			self.ds    = nn.Sequential(*[
-							nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2, bias=False),
-							nn.BatchNorm2d(out_channels)
-							])
+class ClipModel(nn.Module):
+	def __init__(self, args, model_name):
+		super(ClipModel, self).__init__()
+		self.model, _ = clip.load(model_name, device=args.device)
+		if args.cfg.use_mlp == 1:
+			self.fc_cus = nn.Sequential(
+				nn.Linear(1024, 1024),
+				nn.ReLU(),
+				nn.Linear(1024, 1024)
+			)
 		else:
-			self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
-			self.ds    = None
-		self.bn1   = nn.BatchNorm2d(out_channels)
-		self.relu  = nn.ReLU()
-		self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
-		self.bn2   = nn.BatchNorm2d(out_channels)
+			self.fc_cus = nn.Linear(1024, 1024)
+		self.args = args
 
-	def forward(self, x):
-		residual = x
+	def get_img_feat(self, img):
+		self.model, self.fc_cus = self.model.to(self.args.device), self.fc_cus.to(self.args.device)
+		image_features = self.model.encode_image(img)
+		image_features = image_features.to(torch.float32)
 
-		pout = self.conv1(x) # pout: pre out before activation
-		pout = self.bn1(pout)
-		pout = self.relu(pout)
+		image_features = self.fc_cus(image_features)
+		return image_features
 
-		pout = self.conv2(pout)
-		pout = self.bn2(pout)
+	def get_text_feat(self, text):
+		# text = ["a diagram", "a dog", "a cat"]
+		text = clip.tokenize(text)
+		text = text.to(self.args.device)
+		text_features = self.model.encode_text(text)
+		return text_features
 
-		if self.downsample:
-			residual = self.ds(x)
+	def cus_train(self):
+		for name, param in self.model.named_parameters():
+			if "fc_cus" not in name:
+				param.requires_grad = False
 
-		pout += residual
-		out  = self.relu(pout)
 
-		if not self.return_before_act:
-			return out
-		else:
-			return pout, out
 
-class resnet_n(nn.Module):
-	def __init__(self, num_class, n):
-		super(resnet_n, self).__init__()
-		self.conv1   = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-		self.bn1     = nn.BatchNorm2d(16)
-		self.relu    = nn.ReLU()
 
-		res1_num = (n-2) // 3
-		res3_num = (n-2) - res1_num * 2
-		self.res1 = self.make_layer(resblock, res1_num, 16, 16)
-		self.res2 = self.make_layer(resblock, res1_num, 16, 32)
-		self.res3 = self.make_layer(resblock, res3_num, 32, 64)
-
-		self.avgpool = nn.AvgPool2d(8)
-		self.fc      = nn.Linear(64, num_class)
-
-		for m in self.modules():
-			if isinstance(m, nn.Conv2d):
-				nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-				if m.bias is not None:
-					nn.init.constant_(m.bias, 0)
-			elif isinstance(m, nn.BatchNorm2d):
-				nn.init.constant_(m.weight, 1)
-				nn.init.constant_(m.bias, 0)
-
-		self.num_class = num_class
-
-	def make_layer(self, block, num, in_channels, out_channels): # num must >=2
-		layers = [block(in_channels, out_channels, False)]
-		for i in range(num-2):
-			layers.append(block(out_channels, out_channels, False))
-		layers.append(block(out_channels, out_channels, True))
-		return nn.Sequential(*layers)
-
-	def forward(self, x):
-		pstem = self.conv1(x) # pstem: pre stem before activation
-		pstem = self.bn1(pstem)
-		stem  = self.relu(pstem)
-		stem  = (pstem, stem)
-
-		rb1 = self.res1(stem[1])
-		rb2 = self.res2(rb1[1])
-		rb3 = self.res3(rb2[1])
-
-		feat = self.avgpool(rb3[1])
-		feat = feat.view(feat.size(0), -1)
-		out  = self.fc(feat)
-
-		return stem, rb1, rb2, rb3, feat, out
-
-	def get_channel_num(self):
-		return [16, 16, 32, 64, 64, self.num_class]
-
-	def get_chw_num(self):
-		return [(16, 32, 32),
-				(16, 32, 32),
-				(32, 16, 16),
-				(64, 8 , 8 ),
-				(64,),
-				(self.num_class,)]
-
-
-class resnet20(nn.Module):
-	def __init__(self, num_class):
-		super(resnet20, self).__init__()
-		self.conv1   = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-		self.bn1     = nn.BatchNorm2d(16)
-		self.relu    = nn.ReLU()
-
-		self.res1 = self.make_layer(resblock, 3, 16, 16)
-		self.res2 = self.make_layer(resblock, 3, 16, 32)
-		self.res3 = self.make_layer(resblock, 3, 32, 64)
-
-		self.avgpool = nn.AvgPool2d(8)
-		self.fc      = nn.Linear(64, num_class)
-
-		for m in self.modules():
-			if isinstance(m, nn.Conv2d):
-				nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-				if m.bias is not None:
-					nn.init.constant_(m.bias, 0)
-			elif isinstance(m, nn.BatchNorm2d):
-				nn.init.constant_(m.weight, 1)
-				nn.init.constant_(m.bias, 0)
-
-		self.num_class = num_class
-
-	def make_layer(self, block, num, in_channels, out_channels): # num must >=2
-		layers = [block(in_channels, out_channels, False)]
-		for i in range(num-2):
-			layers.append(block(out_channels, out_channels, False))
-		layers.append(block(out_channels, out_channels, True))
-		return nn.Sequential(*layers)
-
-	def forward(self, x):
-		pstem = self.conv1(x) # pstem: pre stem before activation
-		pstem = self.bn1(pstem)
-		stem  = self.relu(pstem)
-		stem  = (pstem, stem)
-
-		rb1 = self.res1(stem[1])
-		rb2 = self.res2(rb1[1])
-		rb3 = self.res3(rb2[1])
-
-		feat = self.avgpool(rb3[1])
-		feat = feat.view(feat.size(0), -1)
-		out  = self.fc(feat)
-
-		return stem, rb1, rb2, rb3, feat, out
-
-	def get_channel_num(self):
-		return [16, 16, 32, 64, 64, self.num_class]
-
-	def get_chw_num(self):
-		return [(16, 32, 32),
-				(16, 32, 32),
-				(32, 16, 16),
-				(64, 8 , 8 ),
-				(64,),
-				(self.num_class,)]
-
-
-class resnet110(nn.Module):
-	def __init__(self, num_class):
-		super(resnet110, self).__init__()
-		self.conv1   = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-		self.bn1     = nn.BatchNorm2d(16)
-		self.relu    = nn.ReLU()
-
-		self.res1 = self.make_layer(resblock, 18, 16, 16)
-		self.res2 = self.make_layer(resblock, 18, 16, 32)
-		self.res3 = self.make_layer(resblock, 18, 32, 64)
-
-		self.avgpool = nn.AvgPool2d(8)
-		self.fc      = nn.Linear(64, num_class)
-
-		for m in self.modules():
-			if isinstance(m, nn.Conv2d):
-				nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-				if m.bias is not None:
-					nn.init.constant_(m.bias, 0)
-			elif isinstance(m, nn.BatchNorm2d):
-				nn.init.constant_(m.weight, 1)
-				nn.init.constant_(m.bias, 0)
-
-		self.num_class = num_class
-
-	def make_layer(self, block, num, in_channels, out_channels):  # num must >=2
-		layers = [block(in_channels, out_channels, False)]
-		for i in range(num-2):
-			layers.append(block(out_channels, out_channels, False))
-		layers.append(block(out_channels, out_channels, True))
-		return nn.Sequential(*layers)
-
-	def forward(self, x):
-		pstem = self.conv1(x) # pstem: pre stem before activation
-		pstem = self.bn1(pstem)
-		stem  = self.relu(pstem)
-		stem  = (pstem, stem)
-
-		rb1 = self.res1(stem[1])
-		rb2 = self.res2(rb1[1])
-		rb3 = self.res3(rb2[1])
-
-		feat = self.avgpool(rb3[1])
-		feat = feat.view(feat.size(0), -1)
-		out  = self.fc(feat)
-
-		return stem, rb1, rb2, rb3, feat, out
-
-	def get_channel_num(self):
-		return [16, 16, 32, 64, 64, self.num_class]
-
-	def get_chw_num(self):
-		return [(16, 32, 32),
-				(16, 32, 32),
-				(32, 16, 16),
-				(64, 8 , 8 ),
-				(64,),
-				(self.num_class,)]
-
-
-class resnet18(nn.Module):
-	def __init__(self, num_class):
-		super(resnet18, self).__init__()
-		self.conv1   = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-		self.bn1     = nn.BatchNorm2d(16)
-		self.relu    = nn.ReLU()
-
-		self.res1 = self.make_layer(resblock, 2, 16, 16)
-		self.res2 = self.make_layer(resblock, 3, 16, 32)
-		self.res3 = self.make_layer(resblock, 3, 32, 64)
-
-		self.avgpool = nn.AvgPool2d(8)
-		self.fc      = nn.Linear(64, num_class)
-
-		for m in self.modules():
-			if isinstance(m, nn.Conv2d):
-				nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-				if m.bias is not None:
-					nn.init.constant_(m.bias, 0)
-			elif isinstance(m, nn.BatchNorm2d):
-				nn.init.constant_(m.weight, 1)
-				nn.init.constant_(m.bias, 0)
-
-		self.num_class = num_class
-
-	def make_layer(self, block, num, in_channels, out_channels): # num must >=2
-		layers = [block(in_channels, out_channels, False)]
-		for i in range(num-2):
-			layers.append(block(out_channels, out_channels, False))
-		layers.append(block(out_channels, out_channels, True))
-		return nn.Sequential(*layers)
-
-	def forward(self, x):
-		pstem = self.conv1(x) # pstem: pre stem before activation
-		pstem = self.bn1(pstem)
-		stem  = self.relu(pstem)
-		stem  = (pstem, stem)
-
-		rb1 = self.res1(stem[1])
-		rb2 = self.res2(rb1[1])
-		rb3 = self.res3(rb2[1])
-
-		feat = self.avgpool(rb3[1])
-		feat = feat.view(feat.size(0), -1)
-		out  = self.fc(feat)
-
-		return stem, rb1, rb2, rb3, feat, out
-
-	def get_channel_num(self):
-		return [16, 16, 32, 64, 64, self.num_class]
-
-	def get_chw_num(self):
-		return [(16, 32, 32),
-				(16, 32, 32),
-				(32, 16, 16),
-				(64, 8 , 8 ),
-				(64,),
-				(self.num_class,)]
-
-class resnet34(nn.Module):
-	def __init__(self, num_class):
-		super(resnet34, self).__init__()
-		self.conv1   = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-		self.bn1     = nn.BatchNorm2d(16)
-		self.relu    = nn.ReLU()
-
-		self.res1 = self.make_layer(resblock, 4, 16, 16)
-		self.res2 = self.make_layer(resblock, 6, 16, 32)
-		self.res3 = self.make_layer(resblock, 6, 32, 64)
-
-		self.avgpool = nn.AvgPool2d(8)
-		self.fc      = nn.Linear(64, num_class)
-
-		for m in self.modules():
-			if isinstance(m, nn.Conv2d):
-				nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-				if m.bias is not None:
-					nn.init.constant_(m.bias, 0)
-			elif isinstance(m, nn.BatchNorm2d):
-				nn.init.constant_(m.weight, 1)
-				nn.init.constant_(m.bias, 0)
-
-		self.num_class = num_class
-
-	def make_layer(self, block, num, in_channels, out_channels): # num must >=2
-		layers = [block(in_channels, out_channels, False)]
-		for i in range(num-2):
-			layers.append(block(out_channels, out_channels, False))
-		layers.append(block(out_channels, out_channels, True))
-		return nn.Sequential(*layers)
-
-	def forward(self, x):
-		pstem = self.conv1(x) # pstem: pre stem before activation
-		pstem = self.bn1(pstem)
-		stem  = self.relu(pstem)
-		stem  = (pstem, stem)
-
-		rb1 = self.res1(stem[1])
-		rb2 = self.res2(rb1[1])
-		rb3 = self.res3(rb2[1])
-
-		feat = self.avgpool(rb3[1])
-		feat = feat.view(feat.size(0), -1)
-		out  = self.fc(feat)
-
-		return stem, rb1, rb2, rb3, feat, out
-
-	def get_channel_num(self):
-		return [16, 16, 32, 64, 64, self.num_class]
-
-	def get_chw_num(self):
-		return [(16, 32, 32),
-				(16, 32, 32),
-				(32, 16, 16),
-				(64, 8 , 8 ),
-				(64,),
-				(self.num_class,)]
 
