@@ -1,3 +1,9 @@
-logfile_info: 'margin0'
+logfile_info: '15-best-lr0.1'
 
-margin: 0
+margin: 0.1
+local_lr: 0.1
+local_momentum: 0.9
+local_weight_decay: 1e-4
+local_epoch: 10
+use_mlp: 1
+round: 100
