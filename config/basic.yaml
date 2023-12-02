@@ -4,7 +4,7 @@ wandb: 1
 client_dataset: 'cifar10'
 
 num_clients: 10
-batch_size: 32 
+batch_size: 64
 dirichlet_alpha: 0.1
 model_name: 'RN50'
 # RN50 RN101 RN50x4 ViT-B/32 ViT-B/16
@@ -21,10 +21,10 @@ dataset_path: "../dataset"
 save_client_model: 0
 
 margin: 0.1
-local_lr: 0.1
+local_lr: 0.01
 local_momentum: 0.9
 local_weight_decay: 1e-4
-local_epoch: 10
+local_epoch: 4
 use_mlp: 0
 
 
