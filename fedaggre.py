@@ -23,11 +23,12 @@ from flwr.common import Metrics
 import argparse
 
 from utils.cfg_utils import read_yaml, print_dict
-from utils.fl_utils import FlowerClient, test, get_parameters, set_parameters
+from utils.fl_utils import FlowerClient, test, get_parameters, set_parameters, CategoryEmbedding
 from utils.data_utils import load_dataloader
 from utils.log_utils import cus_logger
 
 from network import ClipModel
+from custom_strategy import FedAvg_cus
 import wandb
 
 
@@ -78,7 +79,7 @@ model_name = args.cfg.model_name
 clip_model = ClipModel(args, model_name)
 client_resources = args.cfg.client_resource
 
-# ------Initialize CLIP text emb------
+# ------ Initialize CLIP text emb ------
 class_name = ['an Airplane', 'an Automobile', 'a Bird', 'a Cat', 'a Deer',
               'a Dog', 'a Frog', 'a Horse', 'a Ship', 'a Truck']
 text_emb = clip_model.get_text_feat(class_name)
@@ -86,18 +87,24 @@ text_emb = text_emb / text_emb.norm(dim=1, keepdim=True)
 args.text_emb = text_emb.float()
 
 
+# ------ Initialize class embedding collector ------
+args.catemb = CategoryEmbedding()
+print('*** Init catemb ***')
+
 # ------Initialize dataloader------
 train_loaders, val_loaders = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=0, dataloader_num=args.cfg.num_clients)
 _, _, testloader = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=1, dataloader_num=args.cfg.num_clients)
 
 args.trainloaders, args.valloaders, args.testloader = train_loaders, val_loaders, testloader
 
+args.test_num = 1
 
 def client_fn(cid: str) -> FlowerClient:
     """Create a Flower client representing a single organization."""
     _trainloader = train_loaders[int(cid)]
     _valloader = val_loaders[int(cid)]
     _model = ClipModel(args, model_name)
+    print(f'Cid{cid}, test_num{args.test_num}')
     return FlowerClient(cid, _model, _trainloader, _valloader, args)
 
 def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
@@ -113,10 +120,16 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
     wandb.log({f"Weighted_average accuracy": accu})
     return {"accuracy": accu}
 
-strategy = fl.server.strategy.FedAvg(
+# def on_fit_config_fn(server_round):
+#     print('In on_fit_config_fn')
+#     print(f'{server_round=}')
+#     args.catemb = CategoryEmbedding()
+
+strategy = FedAvg_cus(
     fraction_fit=1.0,  # Sample 100% of available clients for training
     fraction_evaluate=1.0,  # Sample 100% of available clients for evaluation
-    evaluate_metrics_aggregation_fn=weighted_average
+    evaluate_metrics_aggregation_fn=weighted_average,
+    args = args
 )
 
 fl.simulation.start_simulation(

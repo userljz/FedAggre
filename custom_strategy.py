@@ -37,8 +37,10 @@ from flwr.common.logger import log
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
 
-from .aggregate import aggregate, weighted_loss_avg
-from .strategy import Strategy
+import sys
+sys.path.insert(0, '../flower/src/py')
+from flwr.server.strategy.aggregate import aggregate, weighted_loss_avg
+from flwr.server.strategy.strategy import Strategy
 
 WARNING_MIN_AVAILABLE_CLIENTS_TOO_LOW = """
 Setting `min_available_clients` lower than `min_fit_clients` or
@@ -48,7 +50,7 @@ than or equal to the values of `min_fit_clients` and `min_evaluate_clients`.
 """
 
 
-class FedAvg(Strategy):
+class FedAvg_cus(Strategy):
     """Configurable FedAvg strategy implementation."""
 
     # pylint: disable=too-many-arguments,too-many-instance-attributes, line-too-long
@@ -130,6 +132,8 @@ class FedAvg(Strategy):
         self.fit_metrics_aggregation_fn = fit_metrics_aggregation_fn
         self.evaluate_metrics_aggregation_fn = evaluate_metrics_aggregation_fn
         self.args = args
+        self.proto = 0
+        print('in fedavg_cus')
 
     def __repr__(self) -> str:
         """Compute a string representation of the strategy."""
@@ -150,6 +154,7 @@ class FedAvg(Strategy):
         self, client_manager: ClientManager
     ) -> Optional[Parameters]:
         """Initialize global model parameters."""
+        print('*** Run initialize_parameters ***')
         initial_parameters = self.initial_parameters
         self.initial_parameters = None  # Don't keep initial parameters in memory
         return initial_parameters
@@ -158,6 +163,7 @@ class FedAvg(Strategy):
         self, server_round: int, parameters: Parameters
     ) -> Optional[Tuple[float, Dict[str, Scalar]]]:
         """Evaluate model parameters using an evaluation function."""
+        print('*** Run evaluate ***')
         if self.evaluate_fn is None:
             # No evaluation function provided
             return None
@@ -172,10 +178,12 @@ class FedAvg(Strategy):
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
     ) -> List[Tuple[ClientProxy, FitIns]]:
         """Configure the next round of training."""
-        config = {}
-        if self.on_fit_config_fn is not None:
-            # Custom fit config function provided
-            config = self.on_fit_config_fn(server_round)
+        print(f'*** Run configure_fit, Server Round {server_round} ***')
+        config = {'server_round': server_round, 'prototype_avg': self.proto}
+        print('self.proto in configure_fit: ', config)
+        # if self.on_fit_config_fn is not None:
+        #     # Custom fit config function provided
+        #     config = self.on_fit_config_fn(server_round)
         fit_ins = FitIns(parameters, config)
 
         # Sample clients
@@ -193,6 +201,7 @@ class FedAvg(Strategy):
         self, server_round: int, parameters: Parameters, client_manager: ClientManager
     ) -> List[Tuple[ClientProxy, EvaluateIns]]:
         """Configure the next round of evaluation."""
+        print('*** Run configure_evaluate ***')
         # Do not configure federated evaluation if fraction eval is 0.
         if self.fraction_evaluate == 0.0:
             return []
@@ -222,6 +231,7 @@ class FedAvg(Strategy):
         failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
     ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
         """Aggregate fit results using weighted average."""
+        print('*** Run aggregate_fit ***')
         if not results:
             return None, {}
         # Do not aggregate if there are failures and failures are not accepted
@@ -234,6 +244,17 @@ class FedAvg(Strategy):
             for _, fit_res in results
         ]
         parameters_aggregated = ndarrays_to_parameters(aggregate(weights_results))
+
+        # ------ Merge prototype_avg ------
+        for _, fit_res in results:
+            client_dict = fit_res.metrics
+            # print('*** fit_res.metrics: ', client_dict)
+            _proto = client_dict['prototype_avg']
+            self.args.catemb.merge(_proto)
+            # print('*** self.args.catemb.CatEmbDict_merge: ', self.args.catemb.CatEmbDict_merge)
+        self.proto = self.args.catemb.avg(dictin=self.args.catemb.CatEmbDict_merge)
+        self.args.catemb.reset()
+        # print('self.proto in aggregate_fit: ', self.proto)
 
         # Aggregate custom metrics if aggregation fn was provided
         metrics_aggregated = {}
@@ -252,6 +273,7 @@ class FedAvg(Strategy):
         failures: List[Union[Tuple[ClientProxy, EvaluateRes], BaseException]],
     ) -> Tuple[Optional[float], Dict[str, Scalar]]:
         """Aggregate evaluation losses using weighted average."""
+        print('*** Run aggregate_evaluate ***')
         if not results:
             return None, {}
         # Do not aggregate if there are failures and failures are not accepted

@@ -27,4 +27,6 @@ local_weight_decay: 1e-4
 local_epoch: 10
 use_mlp: 0
 
+use_extra_emb: 1
+
 

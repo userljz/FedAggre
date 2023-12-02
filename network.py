@@ -23,11 +23,18 @@ class ClipModel(nn.Module):
 			self.fc_cus = nn.Linear(1024, 1024)
 		self.args = args
 
-	def get_img_feat(self, img):
-		self.model, self.fc_cus = self.model.to(self.args.device), self.fc_cus.to(self.args.device)
-		image_features = self.model.encode_image(img)
-		image_features = image_features.to(torch.float32)
-
+	def get_img_feat(self, img, given_feat=None):
+		"""
+		given_feat: Use the average of the features of other clients as a negative sample
+		"""
+		if given_feat is None:
+			self.model, self.fc_cus = self.model.to(self.args.device), self.fc_cus.to(self.args.device)
+			image_features = self.model.encode_image(img)
+			image_features = image_features.to(torch.float32)
+		else:
+			# print('*** Use Given Feat ***')
+			image_features = img
+		
 		image_features = self.fc_cus(image_features)
 		return image_features
 

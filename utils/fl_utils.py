@@ -14,6 +14,7 @@ import torchvision
 import torchvision.transforms as transforms
 import torchvision.models as models
 from torch.utils.data import DataLoader, random_split, Subset
+from collections import defaultdict
 
 import flwr as fl
 import wandb
@@ -51,20 +52,30 @@ It also supports the unsupervised contrastive loss in SimCLR"""
         return loss
 
 
-def train(args, train_loader, model, criterion, optimizer, epoch, cid):
+def train(args, train_loader, model, criterion, optimizer, epoch, cid, config):
     """one epoch training"""
 
     losses = AverageMeter()
 
     for idx, (images, labels) in enumerate(train_loader):
         images, labels = images.to(args.device), labels.to(args.device)
-
+        
         # compute loss
         features = model.get_img_feat(images)
+        args.catemb.update(features, labels)  # collect features
         loss = criterion(features, labels)
+        # compute loss from average features
+        extra_train_num = 0
+        if args.cfg.use_extra_emb == 1 and config['server_round'] > 1:  # make sure it's not the first round
+            # print('*** Calculate Extra Loss ***')
+            _img_emb, _labels = args.catemb.generate_train_emb(config['prototype_avg'])
+            _img_emb, _labels = _img_emb.to(args.device), _labels.to(args.device)
+            features = model.get_img_feat(_img_emb, given_feat=1)
+            loss += criterion(features, _labels)
+            extra_train_num = len(_labels)
 
         # update metric
-        bsz = labels.shape[0]
+        bsz = labels.shape[0] + extra_train_num
         losses.update(loss.item(), bsz)
 
         # SGD
@@ -168,7 +179,7 @@ class FlowerClient(fl.client.NumPyClient):
 
         # ------ train multiple epochs ------
         for epoch in range(1, self.args.cfg.local_epoch + 1):
-            loss = train(self.args, self.trainloader, self.net, self.criterion, optimizer, epoch, self.cid)
+            loss = train(self.args, self.trainloader, self.net, self.criterion, optimizer, epoch, self.cid, config)
             self.client_logger.info(
                 f"Train_Client{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Train_loss:{loss}, DataLength:{len(self.trainloader.dataset)}")
             wandb.log({f"Train_Client{self.cid}|Train_loss:": loss})
@@ -183,10 +194,16 @@ class FlowerClient(fl.client.NumPyClient):
             torch.save(self.net, f"./save_client_model/client_{self.cid}.pth")
             self.client_logger.info(f'Finish saving client model {self.cid}')
 
-        return get_parameters(self.net), len(self.trainloader), {}
+        # ------ Use Extra Embedding ------
+        if self.args.cfg.use_extra_emb == 1:
+            CatEmbDict_avg = self.args.catemb.avg()
+        else:
+            CatEmbDict_avg = 0
+
+        return get_parameters(self.net), len(self.trainloader), {'prototype_avg': CatEmbDict_avg}
 
     def evaluate(self, parameters, config):
-        self.client_logger.info('********** enter evaluate of FlowerClient **********')
+        # self.client_logger.info('********** enter evaluate of FlowerClient **********')
         set_parameters(self.net, parameters)
         loss, _accuracy = test(self.args, self.net, self.valloader, self.criterion)
         self.client_logger.info(f'Cid:{self.cid}, Accu:{float(_accuracy)}, Test_length:{len(self.valloader)}')  # ljz
@@ -225,4 +242,54 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
+class CategoryEmbedding(object):
+    def __init__(self):
+        self.reset()
+        
+
+    def reset(self):
+        self.CatEmbDict = defaultdict(list, {})
+        self.CatEmbDict_avg = defaultdict(list, {})
+        self.CatEmbDict_merge = defaultdict(list, {})
+
+    def update(self, img_emb, label):
+        for index, label_i in enumerate(label):
+            self.CatEmbDict[label_i.item()].append(img_emb[index])
+        # print('*** in update: ', self.CatEmbDict.keys())
+
+    def avg(self, dictin=None):
+        if dictin is None:
+            for k,v in self.CatEmbDict.items():
+                v = torch.stack(tuple(v))
+                v = torch.mean(v, dim=0)
+                self.CatEmbDict_avg[k] = v
+            return self.CatEmbDict_avg
+        else:
+            dictout = defaultdict(list, {})
+            for k,v in dictin.items():
+                v = torch.stack(tuple(v))
+                v = torch.mean(v, dim=0)
+                dictout[k] = v
+            return dictout
+
+
+    def generate_train_emb(self, CatEmbDict_avg):
+        """
+        Return: [n,1024], [n]
+        """
+        _img_emb = torch.stack(tuple(CatEmbDict_avg.values()), dim=0)
+        _labels = torch.Tensor(tuple(CatEmbDict_avg.keys())).long()
+        return _img_emb, _labels
+
+    def merge(self, dict_avg):
+        for k1,v1 in dict_avg.items():
+            self.CatEmbDict_merge[k1].append(v1)
+        # return self.CatEmbDict_merge
+        # for k2,v2 in self.CatEmbDict_merge.items():
+        #     _v = torch.stack(tuple(v2))
+        #     _v = torch.mean(_v, dim=0)
+        #     self.CatEmbDict_merge[k2] = _v
+        # return self.CatEmbDict_merge
+        
 
