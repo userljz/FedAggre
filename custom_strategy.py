@@ -180,7 +180,7 @@ class FedAvg_cus(Strategy):
         """Configure the next round of training."""
         print(f'*** Run configure_fit, Server Round {server_round} ***')
         config = {'server_round': server_round, 'prototype_avg': self.proto}
-        print('self.proto in configure_fit: ', config)
+        # print('self.proto in configure_fit: ', config)
         # if self.on_fit_config_fn is not None:
         #     # Custom fit config function provided
         #     config = self.on_fit_config_fn(server_round)
