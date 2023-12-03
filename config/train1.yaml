@@ -1,4 +1,6 @@
-logfile_info: '1203New2-ExtraLoss20_regularLr_locallr0.01'
+logfile_info: '1203New2-softmax_BothNorm_Marg0.1_ExtraLoss30_ExtraLossWeight0.9'
 
-use_extra_emb_round: 20
-local_lr: 0.01
+use_extra_emb_round: 30
+extra_loss_weight: 0.9
+use_softmax: 1
+margin: 0.1

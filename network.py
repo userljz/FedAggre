@@ -31,6 +31,7 @@ class ClipModel(nn.Module):
 			self.model, self.fc_cus = self.model.to(self.args.device), self.fc_cus.to(self.args.device)
 			image_features = self.model.encode_image(img)
 			image_features = image_features.to(torch.float32)
+			image_features = image_features / image_features.norm(dim=-1, keepdim=True)
 		else:
 			# print('*** Use Given Feat ***')
 			image_features = img

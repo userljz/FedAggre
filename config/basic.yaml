@@ -32,5 +32,6 @@ use_extra_emb_round: 1
 use_traditional_loss_lower_limit: 0
 use_traditional_loss_upper_limit: 0
 extra_loss_weight: 0.5
+use_softmax: 0
 
 

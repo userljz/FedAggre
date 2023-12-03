@@ -52,6 +52,13 @@ for k,v in args_command.items():
     if v is not None:
         args.cfg[k] = v
 
+# ------ for test ------
+if args.cfg.logfile_info == 'test':
+    if args.cfg.use_softmax == 0:
+        print('args.cfg.use_softmax == 0')
+    print(type(args.cfg.use_softmax))
+
+
 # ------wandb config------
 wandb.init(project=args.cfg["wandb_project"], name=args.cfg["logfile_info"], config=args.cfg)
 if args.cfg.wandb == 0:
@@ -82,7 +89,7 @@ client_resources = args.cfg.client_resource
 class_name = ['an Airplane', 'an Automobile', 'a Bird', 'a Cat', 'a Deer',
               'a Dog', 'a Frog', 'a Horse', 'a Ship', 'a Truck']
 text_emb = clip_model.get_text_feat(class_name)
-text_emb = text_emb / text_emb.norm(dim=1, keepdim=True)
+text_emb = text_emb / text_emb.norm(dim=-1, keepdim=True)
 args.text_emb = text_emb.float()
 
 

@@ -41,9 +41,14 @@ It also supports the unsupervised contrastive loss in SimCLR"""
         num_classes = self.args.cfg.num_class
         target = F.one_hot(labels, num_classes).to(self.args.device)
 
-        image_features = features / features.norm(dim=1, keepdim=True)
-        image_features = image_features.float()
-        logits_per_image = 100 * image_features @ self.text_emb.t()  # [bsz, num_class]
+        # image_features = features / features.norm(dim=1, keepdim=True)
+        image_features = features.float()
+
+        if self.args.cfg.use_softmax == 1:
+            logits_per_image = (100 * image_features @ self.text_emb.t()).softmax(dim=-1)
+        else:
+            logits_per_image = 100 * image_features @ self.text_emb.t()  # [bsz, num_class]
+
         logits_per_image = logits_per_image / logits_per_image.norm(dim=-1, keepdim=True)
         logits_per_image = torch.where(target == 1, 1 - logits_per_image, logits_per_image - self.args.cfg.margin)
         logits_per_image = torch.clamp(logits_per_image, min=0)
