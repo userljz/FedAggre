@@ -1,2 +1,4 @@
-logfile_info: '1202EmbAvg-basic'
+logfile_info: '1203New2-ExtraLoss20_regularLr_locallr0.01'
 
+use_extra_emb_round: 20
+local_lr: 0.01

@@ -2,7 +2,6 @@ import os
 from collections import OrderedDict
 from typing import List, Optional, Tuple
 from addict import Dict
-import copy
 import logging
 from logging import debug, info, INFO
 import sys
@@ -96,6 +95,9 @@ train_loaders, val_loaders = load_dataloader(args, cfg.client_dataset, cfg.datas
 _, _, testloader = load_dataloader(args, cfg.client_dataset, cfg.dataset_path, is_iid=1, dataloader_num=args.cfg.num_clients)
 
 args.trainloaders, args.valloaders, args.testloader = train_loaders, val_loaders, testloader
+
+if args.cfg.logfile_info == 'test':
+    train_loaders, val_loaders, testloader = val_loaders, val_loaders, val_loaders
 
 args.test_num = 1
 

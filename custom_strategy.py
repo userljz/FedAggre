@@ -249,12 +249,10 @@ class FedAvg_cus(Strategy):
         for _, fit_res in results:
             client_dict = fit_res.metrics
             # print('*** fit_res.metrics: ', client_dict)
-            _proto = client_dict['prototype_avg']
-            self.args.catemb.merge(_proto)
-            # print('*** self.args.catemb.CatEmbDict_merge: ', self.args.catemb.CatEmbDict_merge)
-        self.proto = self.args.catemb.avg(dictin=self.args.catemb.CatEmbDict_merge)
+            _proto, _num = client_dict['prototype_avg'], client_dict['prototype_num']
+            self.args.catemb.merge(_proto, _num)
+        self.proto = self.args.catemb.avg(dictin=self.args.catemb.CatEmbDict_merge, dict_num=self.args.catemb.num_sum)
         self.args.catemb.reset()
-        # print('self.proto in aggregate_fit: ', self.proto)
 
         # Aggregate custom metrics if aggregation fn was provided
         metrics_aggregated = {}

@@ -1,4 +1,4 @@
-logfile_info: '20231104(01)'
+logfile_info: 'test'
 wandb_project: '20231104'
 wandb: 0
 client_dataset: 'cifar10'

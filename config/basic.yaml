@@ -1,5 +1,5 @@
 logfile_info: '20231104(01)'
-wandb_project: '20231122'
+wandb_project: '20231203'
 wandb: 1
 client_dataset: 'cifar10'
 
@@ -20,13 +20,17 @@ client_resource: {"num_gpus": 1, "num_cpus": 4}
 dataset_path: "../dataset"
 save_client_model: 0
 
-margin: 0.1
-local_lr: 0.01
+margin: 0.2
+local_lr: 0.001
 local_momentum: 0.9
 local_weight_decay: 1e-4
 local_epoch: 4
 use_mlp: 0
 
 use_extra_emb: 1
+use_extra_emb_round: 1
+use_traditional_loss_lower_limit: 0
+use_traditional_loss_upper_limit: 0
+extra_loss_weight: 0.5
 
 

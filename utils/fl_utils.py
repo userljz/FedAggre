@@ -52,41 +52,49 @@ It also supports the unsupervised contrastive loss in SimCLR"""
         return loss
 
 
-def train(args, train_loader, model, criterion, optimizer, epoch, cid, config):
+def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, extra_loss_embedding, criterion_extra):
     """one epoch training"""
 
     losses = AverageMeter()
 
     for idx, (images, labels) in enumerate(train_loader):
         images, labels = images.to(args.device), labels.to(args.device)
-        
-        # compute loss
         features = model.get_img_feat(images)
         args.catemb.update(features, labels)  # collect features
-        loss = criterion(features, labels)
+        
+        # compute traditional_loss
+        traditional_loss_num = 0
+        traditional_loss = 0
+        if config['server_round'] > args.cfg.use_traditional_loss_lower_limit:
+            if args.cfg.use_traditional_loss_upper_limit == 0 or config['server_round'] < args.cfg.use_traditional_loss_upper_limit:
+                traditional_loss = criterion(features, labels)
+                traditional_loss_num = labels.shape[0]
+            
+        
         # compute loss from average features
-        extra_train_num = 0
-        if args.cfg.use_extra_emb == 1 and config['server_round'] > 1:  # make sure it's not the first round
+        extra_loss_num = 0
+        extra_loss = 0
+        extra_loss_weight = 0
+        if args.cfg.use_extra_emb == 1 and config['server_round'] > args.cfg.use_extra_emb_round:  # make sure it's not the first round
             # print('*** Calculate Extra Loss ***')
-            _img_emb, _labels = args.catemb.generate_train_emb(config['prototype_avg'])
-            _img_emb, _labels = _img_emb.to(args.device), _labels.to(args.device)
-            features = model.get_img_feat(_img_emb, given_feat=1)
-            loss += criterion(features, _labels)
-            extra_train_num = len(_labels)
+            # _img_emb = args.catemb.generate_train_emb(config['prototype_avg'])
+            # print(f'{_img_emb =}')
+            # _img_emb = _img_emb.to(args.device)
+            # criterion_extra = SupConLoss(args, extra_loss_embedding)
+            extra_loss = criterion_extra(features, labels)
+            extra_loss_num = labels.shape[0]
+            extra_loss_weight = args.cfg.extra_loss_weight
+
+        loss = extra_loss_weight * extra_loss + (1 - extra_loss_weight) * traditional_loss
 
         # update metric
-        bsz = labels.shape[0] + extra_train_num
+        bsz = int((1 - extra_loss_weight) * traditional_loss_num + extra_loss_weight * extra_loss_num)
         losses.update(loss.item(), bsz)
 
         # SGD
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
-        # print info
-        # if (idx + 1) % 100 == 0:
-        #     custom_logger.info(f'Cid{cid}Train: [{epoch}][{idx + 1}/{len(train_loader)}]\t loss {losses.val:.3f} ({losses.avg:.3f})')
-        #     sys.stdout.flush()
 
     return losses.avg
 
@@ -178,8 +186,15 @@ class FlowerClient(fl.client.NumPyClient):
                                     weight_decay=float(self.args.cfg.local_weight_decay))
 
         # ------ train multiple epochs ------
+        if config['server_round'] > self.args.cfg.use_extra_emb_round:
+            extra_loss_embedding = self.args.catemb.generate_train_emb(config['prototype_avg'])
+            extra_loss_embedding = extra_loss_embedding.to(self.args.device)
+            criterion_extra = SupConLoss(self.args, extra_loss_embedding)
+        else:
+            extra_loss_embedding, criterion_extra = None, None
+
         for epoch in range(1, self.args.cfg.local_epoch + 1):
-            loss = train(self.args, self.trainloader, self.net, self.criterion, optimizer, epoch, self.cid, config)
+            loss = train(self.args, self.trainloader, self.net, self.criterion, optimizer, epoch, self.cid, config, extra_loss_embedding, criterion_extra)
             self.client_logger.info(
                 f"Train_Client{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Train_loss:{loss}, DataLength:{len(self.trainloader.dataset)}")
             wandb.log({f"Train_Client{self.cid}|Train_loss:": loss})
@@ -196,11 +211,12 @@ class FlowerClient(fl.client.NumPyClient):
 
         # ------ Use Extra Embedding ------
         if self.args.cfg.use_extra_emb == 1:
-            CatEmbDict_avg = self.args.catemb.avg()
+            CatEmbDict_avg, emb_num = self.args.catemb.avg()
+            # CatEmbDict_avg = self.args.catemb.CatEmbDict
         else:
-            CatEmbDict_avg = 0
+            CatEmbDict_avg, emb_num = 0, 0
 
-        return get_parameters(self.net), len(self.trainloader), {'prototype_avg': CatEmbDict_avg}
+        return get_parameters(self.net), len(self.trainloader), {'prototype_avg': CatEmbDict_avg, 'prototype_num': emb_num}
 
     def evaluate(self, parameters, config):
         # self.client_logger.info('********** enter evaluate of FlowerClient **********')
@@ -252,44 +268,52 @@ class CategoryEmbedding(object):
         self.CatEmbDict = defaultdict(list, {})
         self.CatEmbDict_avg = defaultdict(list, {})
         self.CatEmbDict_merge = defaultdict(list, {})
+        self.emb_num = defaultdict(list, {})
+        self.num_sum = defaultdict(int)
 
     def update(self, img_emb, label):
+        img_emb = img_emb.detach()
         for index, label_i in enumerate(label):
             self.CatEmbDict[label_i.item()].append(img_emb[index])
-        # print('*** in update: ', self.CatEmbDict.keys())
 
-    def avg(self, dictin=None):
+    def avg(self, dictin=None, dict_num=None):
         if dictin is None:
             for k,v in self.CatEmbDict.items():
                 v = torch.stack(tuple(v))
+                self.emb_num[k] = v.size()[0]
                 v = torch.mean(v, dim=0)
                 self.CatEmbDict_avg[k] = v
-            return self.CatEmbDict_avg
+            return self.CatEmbDict_avg, self.emb_num
         else:
             dictout = defaultdict(list, {})
             for k,v in dictin.items():
                 v = torch.stack(tuple(v))
-                v = torch.mean(v, dim=0)
+                v = torch.sum(v, dim=0)
+                v = v / dict_num[k]
                 dictout[k] = v
+            # print(f'{dict_num =}')
+            # print(f'{dictout =}')
             return dictout
-
 
     def generate_train_emb(self, CatEmbDict_avg):
         """
+        First sort the average embedding, in the sort of classes
+
         Return: [n,1024], [n]
         """
         _img_emb = torch.stack(tuple(CatEmbDict_avg.values()), dim=0)
         _labels = torch.Tensor(tuple(CatEmbDict_avg.keys())).long()
-        return _img_emb, _labels
+        sorting_indices = torch.argsort(_labels)
 
-    def merge(self, dict_avg):
-        for k1,v1 in dict_avg.items():
-            self.CatEmbDict_merge[k1].append(v1)
-        # return self.CatEmbDict_merge
-        # for k2,v2 in self.CatEmbDict_merge.items():
-        #     _v = torch.stack(tuple(v2))
-        #     _v = torch.mean(_v, dim=0)
-        #     self.CatEmbDict_merge[k2] = _v
-        # return self.CatEmbDict_merge
+        # 使用这些索引对第一个tensor进行排序
+        sorted_tensor = _img_emb[sorting_indices]
+        return sorted_tensor
+
+    def merge(self, dict_avg, dict_num):
+        for k1, v1 in dict_avg.items():
+            _num = dict_num[k1]
+            self.num_sum[k1] += _num
+            self.CatEmbDict_merge[k1].append(v1 * _num)
+
         
 
