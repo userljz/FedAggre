@@ -1,7 +1,7 @@
 cd /home/ljz/FedAggre
 
 #must config
-device=2
+device=3
 # yaml=train1.yaml
 yaml=test.yaml
 

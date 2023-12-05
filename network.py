@@ -56,7 +56,7 @@ class ClipModel(nn.Module):
 
 class ClipModel_from_generated(nn.Module):
 	def __init__(self, args):
-		super(ClipModel, self).__init__()
+		super(ClipModel_from_generated, self).__init__()
 		if args.cfg.use_mlp == 1:
 			self.model = nn.Sequential(
 				nn.Linear(1024, 1024),

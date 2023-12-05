@@ -23,10 +23,10 @@ import argparse
 
 from utils.cfg_utils import read_yaml, print_dict
 from utils.fl_utils import FlowerClient, test, get_parameters, set_parameters, CategoryEmbedding
-from utils.data_utils import load_dataloader, load_dataloader_from_generate
+from utils.data_utils import load_dataloader_from_generate
 from utils.log_utils import cus_logger
 
-from network import ClipModel, ClipModel_from_generated
+from network import ClipModel_from_generated
 from custom_strategy import FedAvg_cus
 import wandb
 
