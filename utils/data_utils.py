@@ -145,14 +145,16 @@ def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
 
 
 def load_dataloader_from_generate(args, dataset_name, is_iid=0, dataloader_num=1):
-    # set_random_seed()
+    set_random_seed()
     if dataset_name == 'cifar10':
         train_img = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Train_RN50_imgembV1.pth')
         train_label = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Train_labelsV1.pth')
+        train_img = train_img.float()
         train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
 
         test_img = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Test_RN50_imgembV1.pth')
         test_label = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Test_labelsV1.pth')
+        test_img = test_img.float()
         test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
 
 
@@ -197,8 +199,8 @@ if __name__ == '__main__':
     dataset_name = 'cifar10'
     train_loader_list, test_loader = load_dataloader_from_generate(args, dataset_name, dataloader_num=10)
     for train_loader_i in train_loader_list:
-        for img, label in train_loader_i:
-            print(img.size())
-            break
-        break
-    print(len(test_loader))
+        print(f'{len(train_loader_i)=}')
+        for i in train_loader_i:
+            print(len(i))
+        
+    print(f'{len(test_loader)=}')

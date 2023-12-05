@@ -14,6 +14,7 @@ import torchvision
 import torchvision.transforms as transforms
 import torchvision.models as models
 from torch.utils.data import DataLoader, random_split, Subset
+from utils.data_utils import load_dataloader_from_generate, load_dataloader
 from collections import defaultdict
 
 import flwr as fl
@@ -42,7 +43,7 @@ It also supports the unsupervised contrastive loss in SimCLR"""
         target = F.one_hot(labels, num_classes).to(self.args.device)
 
         # image_features = features / features.norm(dim=1, keepdim=True)
-        image_features = features.float()
+        image_features = features.float().to(self.args.device)
 
         if self.args.cfg.use_softmax == 1:
             logits_per_image = (100 * image_features @ self.text_emb.t()).softmax(dim=-1)
@@ -134,14 +135,24 @@ class FlowerClient(fl.client.NumPyClient):
     def __init__(self, cid, net, trainloader, valloader, args=None):
         self.cid = cid
         self.net = net
-        self.trainloader = trainloader
-        self.valloader = valloader
         self.args = args
         self.client_logger = cus_logger(args, 'client_logger')
-        label_counts = self.count_labels(trainloader)
-        self.client_logger.info(f'Cid_{self.cid}, label_counts:{label_counts}')
         self.criterion = SupConLoss(self.args, self.args.text_emb)
         wandb.init(project=args.cfg["wandb_project"], name=args.cfg["logfile_info"], config=args.cfg)
+        self.get_dataset()
+
+    def get_dataset(self):
+        args = self.args
+        tr, te = load_dataloader_from_generate(args, args.cfg.client_dataset, dataloader_num=args.cfg.num_clients)
+        
+        self.trainloader = tr[int(self.cid)]
+        self.valloader = te
+
+        label_counts = self.count_labels(self.trainloader)
+        self.client_logger.info(f'Cid[{self.cid}] Label Count is {label_counts}')
+        label_counts = self.count_labels(self.valloader)
+        self.client_logger.info(f'Cid[{self.cid}] te Label Count is {label_counts}')
+
 
     def get_parameters(self, config):
         return get_parameters(self.net)
@@ -155,7 +166,7 @@ class FlowerClient(fl.client.NumPyClient):
                                     weight_decay=float(self.args.cfg.local_weight_decay))
 
         # ------ train multiple epochs ------
-        if config['server_round'] > self.args.cfg.use_extra_emb_round:
+        if config['server_round'] > self.args.cfg.use_extra_emb_round and self.args.cfg.use_extra_emb == 1:
             extra_loss_embedding = self.args.catemb.generate_train_emb(config['prototype_avg'])
             extra_loss_embedding = extra_loss_embedding.to(self.args.device)
             criterion_extra = SupConLoss(self.args, extra_loss_embedding)
@@ -188,14 +199,12 @@ class FlowerClient(fl.client.NumPyClient):
         return get_parameters(self.net), len(self.trainloader), {'prototype_avg': CatEmbDict_avg, 'prototype_num': emb_num}
 
     def evaluate(self, parameters, config):
-        # self.client_logger.info('********** enter evaluate of FlowerClient **********')
         set_parameters(self.net, parameters)
         loss, _accuracy = test(self.args, self.net, self.valloader, self.criterion)
         self.client_logger.info(f'Cid:{self.cid}, Accu:{float(_accuracy)}, Test_length:{len(self.valloader)}')  # ljz
         return float(loss), len(self.valloader), {"accuracy": float(_accuracy), 'test': 12138}  # ljz
 
     def count_labels(self, data_loader):
-        # Initialize a counter dictionary
         label_counts = {}
 
         for _, labels in data_loader:

@@ -241,13 +241,14 @@ class FedAvg_cus(Strategy):
         parameters_aggregated = ndarrays_to_parameters(aggregate(weights_results))
 
         # ------ Merge prototype_avg ------
-        for _, fit_res in results:
-            client_dict = fit_res.metrics
-            # print('*** fit_res.metrics: ', client_dict)
-            _proto, _num = client_dict['prototype_avg'], client_dict['prototype_num']
-            self.args.catemb.merge(_proto, _num)
-        self.proto = self.args.catemb.avg(dictin=self.args.catemb.CatEmbDict_merge, dict_num=self.args.catemb.num_sum)
-        self.args.catemb.reset()
+        if self.args.cfg.use_extra_emb == 1:
+            for _, fit_res in results:
+                client_dict = fit_res.metrics
+                # print('*** fit_res.metrics: ', client_dict)
+                _proto, _num = client_dict['prototype_avg'], client_dict['prototype_num']
+                self.args.catemb.merge(_proto, _num)
+            self.proto = self.args.catemb.avg(dictin=self.args.catemb.CatEmbDict_merge, dict_num=self.args.catemb.num_sum)
+            self.args.catemb.reset()
 
         # Aggregate custom metrics if aggregation fn was provided
         metrics_aggregated = {}

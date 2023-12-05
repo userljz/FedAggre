@@ -2,8 +2,8 @@ cd /home/ljz/FedAggre
 
 #must config
 device=3
-# yaml=train1.yaml
-yaml=test.yaml
+yaml=train1.yaml
+# yaml=test.yaml
 
 CUDA_VISIBLE_DEVICES=$device python fedaggre.py --yaml_name $yaml  #&> ./log/test
 

@@ -71,7 +71,7 @@ class ClipModel_from_generated(nn.Module):
 		"""
 		given_feat: Use the average of the features of other clients as a negative sample
 		"""
-		image_features = self.model(image_features)
+		image_features = self.model(img_emb)
 		return image_features
 
 

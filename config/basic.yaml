@@ -1,5 +1,5 @@
 logfile_info: '20231104(01)'
-wandb_project: '20231203'
+wandb_project: '20231205'
 wandb: 1
 client_dataset: 'cifar10'
 

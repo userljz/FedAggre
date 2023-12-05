@@ -23,7 +23,7 @@ import argparse
 
 from utils.cfg_utils import read_yaml, print_dict
 from utils.fl_utils import FlowerClient, test, get_parameters, set_parameters, CategoryEmbedding
-from utils.data_utils import load_dataloader_from_generate
+from utils.data_utils import load_dataloader_from_generate, load_dataloader
 from utils.log_utils import cus_logger
 
 from network import ClipModel_from_generated
@@ -72,51 +72,32 @@ log_name = f'{cfg.logfile_info}_{cfg.client_model}_{cfg.server_model}_{cfg.round
 args.log_name = log_name
 logger1 = cus_logger(args, __name__, m='w')
 
-# ------device config------
-DEVICE = torch.device(args.cfg.device)
-args.device = DEVICE
-
 # ------start training------
+args.device = args.cfg.device
 logger1.info(f"-------------------------------------------Start a New------------------------------------------------")
-logger1.info(f"Training on {DEVICE} using PyTorch {torch.__version__} and Flower {fl.__version__}")
+logger1.info(f"Training on {args.cfg.device} using PyTorch {torch.__version__} and Flower {fl.__version__}")
 
 print_dict(args)
 
 # ------ Initialize CLIP text emb ------
 text_emb = torch.load('/home/ljz/dataset/cifar10_generated/cifar10_RN50_textemb.pth')
-args.text_emb = text_emb.float()
+args.text_emb = text_emb.float().to(args.cfg.device)
 
 
 # ------ Initialize class embedding collector ------
 args.catemb = CategoryEmbedding()
 print('*** Init catemb ***')
 
-# ------Initialize dataloader------
-train_loaders, testloader = load_dataloader_from_generate(args, args.cfg.client_dataset, dataloader_num=args.cfg.num_clients)
-args.trainloaders, args.testloader = train_loaders, testloader
-
-# ------ Conduct some code only in test setting ------
-if args.cfg.logfile_info == 'test':
-    train_loaders, testloader = train_loaders, testloader
-
-
 def client_fn(cid: str) -> FlowerClient:
     """Create a Flower client representing a single organization."""
-    print(f'Create Flower Client {cid}')
-    _trainloader = train_loaders[int(cid)]
-    _testloader = testloader
     _model = ClipModel_from_generated(args)
-    return FlowerClient(cid, _model, _trainloader, _testloader, args)
+    return FlowerClient(cid, _model, None, None, args)
 
 def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
-    # Multiply accuracy of each client by number of examples used
-    # metrics is the return value of evaluate func of the FlowerClient
     accuracies = [num_examples * m["accuracy"] for num_examples, m in metrics]
     examples = [num_examples for num_examples, _ in metrics]
 
     accu = sum(accuracies) / sum(examples)
-    # logger1.info(f'*** in weighted_average ***')
-    # logger1.info(f'{metrics=}')
     logger1.info(f'*** in weighted_average *** {accu=}')
     wandb.log({f"Weighted_average accuracy": accu})
     return {"accuracy": accu}
@@ -128,19 +109,9 @@ strategy = FedAvg_cus(
     fraction_evaluate=1.0,  # Sample 100% of available clients for evaluation
     evaluate_metrics_aggregation_fn=weighted_average,
     args = args,
-    initial_parameters=fl.common.ndarrays_to_parameters(params)
 )
 
-# strategy = fl.server.strategy.FedAvg(
-#     fraction_fit=0.3,
-#     fraction_evaluate=0.3,
-#     min_fit_clients=3,
-#     min_evaluate_clients=3,
-#     min_available_clients=NUM_CLIENTS,
-#     initial_parameters=fl.common.ndarrays_to_parameters(params),
-# )
 
-print('start simulation')
 fl.simulation.start_simulation(
     client_fn=client_fn,
     num_clients=args.cfg.num_clients,

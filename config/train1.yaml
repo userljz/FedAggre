@@ -1,6 +1,6 @@
-logfile_info: '1203New2-BothNorm_Marg0.1_ExtraLoss30_ExtraLossWeight0.9'
+logfile_info: '1205-TestTrain1'
 
-use_extra_emb_round: 30
-extra_loss_weight: 0.9
+use_extra_emb_round: 1000
+use_extra_emb: 0
 use_softmax: 0
-margin: 0.1
+margin: 0.2
