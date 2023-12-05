@@ -3,7 +3,7 @@ wandb_project: '20231104'
 wandb: 0
 client_dataset: 'cifar10'
 
-num_clients: 2
+num_clients: 4
 batch_size: 32
 dirichlet_alpha: 0.1
 model_name: 'RN50'
@@ -12,7 +12,7 @@ num_class: 10
 
 seed: 42
 device: 'cuda'
-client_resource: {"num_gpus": 1, "num_cpus": 4}
+client_resource: {"num_gpus": 1, "num_cpus": 18}
 dataset_path: "../dataset"
 save_client_model: 0
 

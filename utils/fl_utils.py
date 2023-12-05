@@ -121,6 +121,7 @@ def test(args, net, testloader, criterion):
 
 
 def get_parameters(net) -> List[np.ndarray]:
+    print('*** in get_param ***')
     return [val.cpu().numpy() for _, val in net.state_dict().items()]
 
 def set_parameters(net, parameters: List[np.ndarray]):
@@ -146,7 +147,7 @@ class FlowerClient(fl.client.NumPyClient):
         return get_parameters(self.net)
 
     def fit(self, parameters, config):
-        model = set_parameters(self.net, parameters)
+        set_parameters(self.net, parameters)
 
         optimizer = torch.optim.SGD(self.net.parameters(),
                                     lr=float(self.args.cfg.local_lr),

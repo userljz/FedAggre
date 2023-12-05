@@ -15,7 +15,7 @@ from logging import debug, info
 from addict import Dict
 import random
 
-logging.basicConfig(format='%(levelname)s | %(funcName)s | %(lineno)d: %(message)s', level=logging.INFO)
+# logging.basicConfig(format='%(levelname)s | %(funcName)s | %(lineno)d: %(message)s', level=logging.INFO)
 
 
 def _convert_image_to_rgb(image):
@@ -145,7 +145,7 @@ def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
 
 
 def load_dataloader_from_generate(args, dataset_name, is_iid=0, dataloader_num=1):
-    set_random_seed()
+    # set_random_seed()
     if dataset_name == 'cifar10':
         train_img = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Train_RN50_imgembV1.pth')
         train_label = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Train_labelsV1.pth')

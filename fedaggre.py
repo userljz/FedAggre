@@ -62,7 +62,9 @@ if args.cfg.logfile_info == 'test':
 # ------wandb config------
 wandb.init(project=args.cfg["wandb_project"], name=args.cfg["logfile_info"], config=args.cfg)
 if args.cfg.wandb == 0:
-    os.environ['WANDB_MODE'] = 'dryrun'
+    # os.environ['WANDB_MODE'] = 'dryrun'
+    # os.environ['WANDB_DISABLED'] = 'true'
+    os.environ["WANDB_SILENT"] = "true"
 
 
 # ------log config------
@@ -95,11 +97,12 @@ args.trainloaders, args.testloader = train_loaders, testloader
 
 # ------ Conduct some code only in test setting ------
 if args.cfg.logfile_info == 'test':
-    train_loaders, testloader = testloader, testloader
+    train_loaders, testloader = train_loaders, testloader
 
 
 def client_fn(cid: str) -> FlowerClient:
     """Create a Flower client representing a single organization."""
+    print(f'Create Flower Client {cid}')
     _trainloader = train_loaders[int(cid)]
     _testloader = testloader
     _model = ClipModel_from_generated(args)
@@ -118,13 +121,26 @@ def weighted_average(metrics: List[Tuple[int, Metrics]]) -> Metrics:
     wandb.log({f"Weighted_average accuracy": accu})
     return {"accuracy": accu}
 
+model = ClipModel_from_generated(args)
+params = get_parameters(model)
 strategy = FedAvg_cus(
     fraction_fit=1.0,  # Sample 100% of available clients for training
     fraction_evaluate=1.0,  # Sample 100% of available clients for evaluation
     evaluate_metrics_aggregation_fn=weighted_average,
-    args = args
+    args = args,
+    initial_parameters=fl.common.ndarrays_to_parameters(params)
 )
 
+# strategy = fl.server.strategy.FedAvg(
+#     fraction_fit=0.3,
+#     fraction_evaluate=0.3,
+#     min_fit_clients=3,
+#     min_evaluate_clients=3,
+#     min_available_clients=NUM_CLIENTS,
+#     initial_parameters=fl.common.ndarrays_to_parameters(params),
+# )
+
+print('start simulation')
 fl.simulation.start_simulation(
     client_fn=client_fn,
     num_clients=args.cfg.num_clients,

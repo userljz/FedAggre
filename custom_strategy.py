@@ -17,7 +17,6 @@
 Paper: arxiv.org/abs/1602.05629
 """
 
-
 from logging import WARNING
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -37,8 +36,7 @@ from flwr.common.logger import log
 from flwr.server.client_manager import ClientManager
 from flwr.server.client_proxy import ClientProxy
 
-import sys
-sys.path.insert(0, '../flower/src/py')
+
 from flwr.server.strategy.aggregate import aggregate, weighted_loss_avg
 from flwr.server.strategy.strategy import Strategy
 
@@ -183,7 +181,6 @@ class FedAvg_cus(Strategy):
         config = {'server_round': server_round, 'prototype_avg': self.proto}
         
         fit_ins = FitIns(parameters, config)
-
         # Sample clients
         sample_size, min_num_clients = self.num_fit_clients(
             client_manager.num_available()

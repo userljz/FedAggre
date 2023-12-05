@@ -62,9 +62,9 @@ class ClipModel_from_generated(nn.Module):
 				nn.Linear(1024, 1024),
 				nn.ReLU(),
 				nn.Linear(1024, 1024)
-			)
+			).to(args.device)
 		else:
-			self.model = nn.Linear(1024, 1024)
+			self.model = nn.Linear(1024, 1024).to(args.device)
 		self.args = args
 
 	def get_img_feat(self, img_emb):
