@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, random_split, Subset
 from torchvision.datasets import CIFAR10, CIFAR100
 import logging
 from logging import debug, info
+from addict import Dict
 
 logging.basicConfig(format='%(levelname)s | %(funcName)s | %(lineno)d: %(message)s', level=logging.INFO)
 
@@ -19,19 +20,20 @@ logging.basicConfig(format='%(levelname)s | %(funcName)s | %(lineno)d: %(message
 def _convert_image_to_rgb(image):
     return image.convert("RGB")
 
+def set_random_seed(seed=0):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 class dsDict:
     def __init__(self, ds, mean, std):
         self.dataset = ds
         self.mean = mean
         self.std = std
-        # self.train_transform = transforms.Compose([
-        #     transforms.Pad(4, padding_mode='reflect'),
-        #     transforms.RandomCrop(32),
-        #     transforms.RandomHorizontalFlip(),
-        #     transforms.ToTensor(),
-        #     transforms.Normalize(mean=self.mean, std=self.std)
-        # ])
+        
         self.train_transform = transforms.Compose([
             transforms.Resize(224, interpolation=InterpolationMode.BICUBIC),
             transforms.CenterCrop(224),
@@ -139,3 +141,62 @@ def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
             # trainloaders = [DataLoader(d, batch_size=args.cfg.batch_size, shuffle=True) for d in client_trainsets]
             # testloaders = [DataLoader(d, batch_size=args.cfg.batch_size, shuffle=True) for d in client_testsets]
             return train_loaders, val_loaders
+
+
+def load_dataloader_from_generate(args, dataset_name, is_iid=0, dataloader_num=1):
+    if dataset_name == 'cifar10':
+        train_img = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Train_RN50_imgembV1.pth')
+        train_label = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Train_labelsV1.pth')
+        train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
+
+        test_img = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Test_RN50_imgembV1.pth')
+        test_label = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Test_labelsV1.pth')
+        test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
+
+
+    elif dataset_name == 'cifar100':
+        print('to be done')
+
+    if is_iid == 1 and dataloader_num == 1:
+        train_loader = torch.utils.data.DataLoader(
+            train_img_label_list,
+            batch_size=args.cfg.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+        test_loader = torch.utils.data.DataLoader(
+            test_img_label_list,
+            batch_size=args.cfg.batch_size, shuffle=False, num_workers=4, pin_memory=True)
+
+        return train_loader, test_loader
+
+    elif dataloader_num > 1:
+        test_loader = torch.utils.data.DataLoader(
+                        test_img_label_list,
+                        batch_size=args.cfg.batch_size, shuffle=False, num_workers=4, pin_memory=True)
+
+        
+        # return non-iid multi-clients trainloaders
+        labels = np.array(train_label)
+        client_idcs = dirichlet_split_noniid(args, labels, args.cfg.dirichlet_alpha, args.cfg.num_clients)
+        client_trainsets = []
+        for client_i in client_idcs:
+            client_trainsets.append(Subset(train_img_label_list, client_i))
+
+        train_loaders = []
+        val_loaders = []
+        for i in client_trainsets:
+            train_loaders.append(DataLoader(i, batch_size=args.cfg.batch_size, shuffle=True))
+        return train_loaders, test_loader
+
+
+if __name__ == '__main__':
+    args = Dict()
+    args.cfg.dirichlet_alpha = 0.1
+    args.cfg.num_clients = 10
+    args.cfg.batch_size = 32
+    dataset_name = 'cifar10'
+    train_loader_list, test_loader = load_dataloader_from_generate(args, dataset_name, dataloader_num=10)
+    for train_loader_i in train_loader_list:
+        for img, label in train_loader_i:
+            print(img.size())
+            break
+        break
+    print(len(test_loader))

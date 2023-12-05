@@ -54,4 +54,27 @@ class ClipModel(nn.Module):
 
 
 
+class ClipModel_from_generated(nn.Module):
+	def __init__(self, args):
+		super(ClipModel, self).__init__()
+		if args.cfg.use_mlp == 1:
+			self.model = nn.Sequential(
+				nn.Linear(1024, 1024),
+				nn.ReLU(),
+				nn.Linear(1024, 1024)
+			)
+		else:
+			self.model = nn.Linear(1024, 1024)
+		self.args = args
+
+	def get_img_feat(self, img_emb):
+		"""
+		given_feat: Use the average of the features of other clients as a negative sample
+		"""
+		image_features = self.model(image_features)
+		return image_features
+
+
+
+
 

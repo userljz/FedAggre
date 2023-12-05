@@ -59,15 +59,13 @@ It also supports the unsupervised contrastive loss in SimCLR"""
 
 def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, extra_loss_embedding, criterion_extra):
     """one epoch training"""
-
     losses = AverageMeter()
-
     for idx, (images, labels) in enumerate(train_loader):
         images, labels = images.to(args.device), labels.to(args.device)
         features = model.get_img_feat(images)
         args.catemb.update(features, labels)  # collect features
         
-        # compute traditional_loss
+        # ------ Compute traditional_loss ------
         traditional_loss_num = 0
         traditional_loss = 0
         if config['server_round'] > args.cfg.use_traditional_loss_lower_limit:
@@ -76,16 +74,11 @@ def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, e
                 traditional_loss_num = labels.shape[0]
             
         
-        # compute loss from average features
+        # ------ Compute loss from average features ------
         extra_loss_num = 0
         extra_loss = 0
         extra_loss_weight = 0
         if args.cfg.use_extra_emb == 1 and config['server_round'] > args.cfg.use_extra_emb_round:  # make sure it's not the first round
-            # print('*** Calculate Extra Loss ***')
-            # _img_emb = args.catemb.generate_train_emb(config['prototype_avg'])
-            # print(f'{_img_emb =}')
-            # _img_emb = _img_emb.to(args.device)
-            # criterion_extra = SupConLoss(args, extra_loss_embedding)
             extra_loss = criterion_extra(features, labels)
             extra_loss_num = labels.shape[0]
             extra_loss_weight = args.cfg.extra_loss_weight
@@ -127,39 +120,13 @@ def test(args, net, testloader, criterion):
     return losses.avg, _accuracy
 
 
-def get_parameters(net):
-    ret = []
-    for name, val in net.state_dict().items():
-        if 'fc_cus' in name:
-            ret.append(val.cpu().numpy())
-    return ret
+def get_parameters(net) -> List[np.ndarray]:
+    return [val.cpu().numpy() for _, val in net.state_dict().items()]
 
-
-def set_parameters(net, parameters):
-    # params_dict = zip(net.state_dict().keys(), parameters)
-    # # state_dict = OrderedDict     ({k: torch.Tensor(v) for k, v in params_dict})
-    # state_dict = OrderedDict({k: torch.from_numpy(v) for k, v in params_dict})
-    # net.load_state_dict(state_dict, strict=True)
-    # return net
-    """
-    :param net: CLIP(with pretrained params) + fc_cus(random initialized)
-    :param parameters: Only include the last layer fc_cus, dict
-    :return: CLIP with new params loaded in
-    """
-    fc_key = []
-    for k in net.state_dict().keys():
-        if 'fc_cus' in k:
-            fc_key.append(k)
-    parameters = [torch.from_numpy(p) for p in parameters]
-
-    params_dict = dict(zip(fc_key, parameters))
-    # print(f'{params_dict = }')
-    # for k,v in params_dict.items():
-    #     print(f'{v.dtype=}')
-    pretrain_dict = net.state_dict()
-    pretrain_dict.update(params_dict)
-    net.load_state_dict(pretrain_dict)
-    return net
+def set_parameters(net, parameters: List[np.ndarray]):
+    params_dict = zip(net.state_dict().keys(), parameters)
+    state_dict = OrderedDict({k: torch.Tensor(v) for k, v in params_dict})
+    net.load_state_dict(state_dict, strict=True)
 
 
 class FlowerClient(fl.client.NumPyClient):
@@ -179,13 +146,9 @@ class FlowerClient(fl.client.NumPyClient):
         return get_parameters(self.net)
 
     def fit(self, parameters, config):
-        # print(f'Flower Client Params: {parameters}')
         model = set_parameters(self.net, parameters)
 
-        # self.criterion = SupConLoss(self.args, self.args.text_emb)
-        model.cus_train()
-        pg = [p for p in model.parameters() if p.requires_grad]
-        optimizer = torch.optim.SGD(pg,
+        optimizer = torch.optim.SGD(self.net.parameters(),
                                     lr=float(self.args.cfg.local_lr),
                                     momentum=float(self.args.cfg.local_momentum),
                                     weight_decay=float(self.args.cfg.local_weight_decay))
