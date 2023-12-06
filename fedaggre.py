@@ -80,7 +80,7 @@ logger1.info(f"Training on {args.cfg.device} using PyTorch {torch.__version__} a
 print_dict(args)
 
 # ------ Initialize CLIP text emb ------
-text_emb = torch.load('/home/ljz/dataset/cifar10_generated/cifar10_RN50_textemb.pth')
+text_emb = torch.load(f'/home/ljz/dataset/{args.cfg.client_dataset}_generated/{args.cfg.client_dataset}_RN50_textemb.pth')
 args.text_emb = text_emb.float().to(args.cfg.device)
 
 

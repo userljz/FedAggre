@@ -1,6 +1,10 @@
-logfile_info: '1205-TestTrain1'
+logfile_info: '1206-C100-Round1000-Mlp1'
 
-use_extra_emb_round: 1000
+use_extra_emb_round: 10000
 use_extra_emb: 0
 use_softmax: 0
 margin: 0.2
+client_dataset: 'cifar100'
+num_class: 100
+round: 1000
+use_mlp: 1

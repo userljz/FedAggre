@@ -15,9 +15,9 @@ class ClipModel(nn.Module):
 		self.model, _ = clip.load(model_name, device=args.device)
 		if args.cfg.use_mlp == 1:
 			self.fc_cus = nn.Sequential(
-				nn.Linear(1024, 1024),
+				nn.Linear(1024, 2048),
 				nn.ReLU(),
-				nn.Linear(1024, 1024)
+				nn.Linear(2048, 1024)
 			)
 		else:
 			self.fc_cus = nn.Linear(1024, 1024)

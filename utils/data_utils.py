@@ -159,7 +159,15 @@ def load_dataloader_from_generate(args, dataset_name, is_iid=0, dataloader_num=1
 
 
     elif dataset_name == 'cifar100':
-        print('to be done')
+        train_img = torch.load('/home/ljz/dataset/cifar100_generated/cifar100Train_RN50_imgembV1.pth')
+        train_label = torch.load('/home/ljz/dataset/cifar100_generated/cifar100Train_labelsV1.pth')
+        train_img = train_img.float()
+        train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
+
+        test_img = torch.load('/home/ljz/dataset/cifar100_generated/cifar100Test_RN50_imgembV1.pth')
+        test_label = torch.load('/home/ljz/dataset/cifar100_generated/cifar100Test_labelsV1.pth')
+        test_img = test_img.float()
+        test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
 
     if is_iid == 1 and dataloader_num == 1:
         train_loader = torch.utils.data.DataLoader(
