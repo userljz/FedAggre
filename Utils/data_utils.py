@@ -15,11 +15,13 @@ from logging import debug, info
 from addict import Dict
 import random
 
+
 # logging.basicConfig(format='%(levelname)s | %(funcName)s | %(lineno)d: %(message)s', level=logging.INFO)
 
 
 def _convert_image_to_rgb(image):
     return image.convert("RGB")
+
 
 def set_random_seed(seed=0):
     random.seed(seed)
@@ -29,12 +31,13 @@ def set_random_seed(seed=0):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+
 class dsDict:
     def __init__(self, ds, mean, std):
         self.dataset = ds
         self.mean = mean
         self.std = std
-        
+
         self.train_transform = transforms.Compose([
             transforms.Resize(224, interpolation=InterpolationMode.BICUBIC),
             transforms.CenterCrop(224),
@@ -181,10 +184,9 @@ def load_dataloader_from_generate(args, dataset_name, is_iid=0, dataloader_num=1
 
     elif dataloader_num > 1:
         test_loader = torch.utils.data.DataLoader(
-                        test_img_label_list,
-                        batch_size=args.cfg.batch_size, shuffle=False, num_workers=4, pin_memory=True)
+            test_img_label_list,
+            batch_size=args.cfg.batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-        
         # return non-iid multi-clients trainloaders
         labels = np.array(train_label)
         client_idcs = dirichlet_split_noniid(args, labels, args.cfg.dirichlet_alpha, args.cfg.num_clients)
@@ -210,5 +212,5 @@ if __name__ == '__main__':
         print(f'{len(train_loader_i)=}')
         for i in train_loader_i:
             print(len(i))
-        
+
     print(f'{len(test_loader)=}')

@@ -1,24 +1,8 @@
+wandb_project: '20231205'
 logfile_info: 'test'
-wandb_project: '20231104'
-wandb: 0
-client_dataset: 'cifar10'
+wandb: 1
+client_dataset: 'cifar100'
+num_class: 100
 
-num_clients: 4
-batch_size: 32
-dirichlet_alpha: 0.1
-model_name: 'RN50'
+num_clients: 2
 round: 2
-num_class: 10
-
-seed: 42
-device: 'cuda'
-client_resource: {"num_gpus": 1, "num_cpus": 18}
-dataset_path: "../dataset"
-save_client_model: 0
-
-margin: 0.0
-local_lr: 1
-local_momentum: 0.9
-local_weight_decay: 1e-4
-local_epoch: 1
-use_extra_emb: 0

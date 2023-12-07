@@ -1,4 +1,4 @@
-logfile_info: '1206-C100-Round1000-Mlp1'
+logfile_info: '1207-C100-Round1000-Mlp1'
 
 use_extra_emb_round: 10000
 use_extra_emb: 0

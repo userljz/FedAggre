@@ -1,7 +1,8 @@
 logfile_info: '20231104(01)'
-wandb_project: '20231205'
+wandb_project: '20231207'
 wandb: 1
 client_dataset: 'cifar10'
+num_class: 10
 
 num_clients: 10
 batch_size: 64
@@ -10,12 +11,10 @@ model_name: 'RN50'
 # RN50 RN101 RN50x4 ViT-B/32 ViT-B/16
 
 round: 100
-num_class: 10
 
 
-seed: 42
+
 device: 'cuda'
-client_resource: {"num_gpus": 1, "num_cpus": 4}
 
 dataset_path: "../dataset"
 save_client_model: 0
@@ -33,5 +32,9 @@ use_traditional_loss_lower_limit: 0
 use_traditional_loss_upper_limit: 0
 extra_loss_weight: 0.5
 use_softmax: 0
+
+use_before_fc_emb: 0
+use_after_fc_emb: 0
+use_after_fc_emb_round: 0
 
 
