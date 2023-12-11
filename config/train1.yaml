@@ -1,10 +1,21 @@
-logfile_info: '1207-C100-Round1000-Mlp1'
+logfile_info: '1209-C100-usemlp_OnlyGen_Gen2W_E50_BeforeEmbStart1'
+wandb_project: '20231209'
 
-use_extra_emb_round: 10000
-use_extra_emb: 0
-use_softmax: 0
-margin: 0.2
+
+num_clients: 10
+
 client_dataset: 'cifar100'
 num_class: 100
-round: 1000
+
+reverse_textemb: 1
+
+local_epoch: 50
 use_mlp: 1
+round: 80
+
+use_before_fc_emb: 1
+gene_num: 20000
+use_before_fc_emb_round: 1
+
+use_traditional_loss_lower_limit: 0
+use_traditional_loss_upper_limit: 2

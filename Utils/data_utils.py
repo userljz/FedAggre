@@ -147,7 +147,7 @@ def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
             return train_loaders, val_loaders
 
 
-def load_dataloader_from_generate(args, dataset_name, is_iid=0, dataloader_num=1):
+def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
     set_random_seed()
     if dataset_name == 'cifar10':
         train_img = torch.load('/home/ljz/dataset/cifar10_generated/cifar10Train_RN50_imgembV1.pth')
@@ -172,7 +172,7 @@ def load_dataloader_from_generate(args, dataset_name, is_iid=0, dataloader_num=1
         test_img = test_img.float()
         test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
 
-    if is_iid == 1 and dataloader_num == 1:
+    if dataloader_num == 1:
         train_loader = torch.utils.data.DataLoader(
             train_img_label_list,
             batch_size=args.cfg.batch_size, shuffle=True, num_workers=4, pin_memory=True)
@@ -180,7 +180,7 @@ def load_dataloader_from_generate(args, dataset_name, is_iid=0, dataloader_num=1
             test_img_label_list,
             batch_size=args.cfg.batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
-        return train_loader, test_loader
+        return [train_loader], test_loader
 
     elif dataloader_num > 1:
         test_loader = torch.utils.data.DataLoader(

@@ -78,6 +78,9 @@ print_dict(args)
 
 # ------ Initialize CLIP text emb ------
 text_emb = torch.load(f'/home/ljz/dataset/{args.cfg.client_dataset}_generated/{args.cfg.client_dataset}_RN50_textemb.pth')
+if args.cfg.reverse_textemb == 1:
+    text_emb = text_emb.flip(dims=[0])
+
 args.text_emb = text_emb.float().to(args.cfg.device)
 
 
@@ -123,8 +126,8 @@ def count_labels(data_loader):
 class Server():
     def __init__(self, args):
         self.args = args
-        self.BeforeEmb_avg = None
-        self.AfterEmb_avg = None
+        self.BeforeEmb_avg = defaultdict(list, {})
+        self.AfterEmb_avg = defaultdict(list, {})
 
     def aggregate_fit(self, server_round, results):
         weights_results = [
@@ -138,7 +141,7 @@ class Server():
             for fit_res in results:
                 _client_dict = fit_res.metrics
                 _BeforeEmb_avg = _client_dict['BeforeEmb_avg']
-                self.BeforeEmb_avg = self.args.catemb.merge(self.BeforeEmb_avg, _BeforeEmb_avg)
+                self.BeforeEmb_avg = self.args.catemb.merge_mean_var(self.BeforeEmb_avg, _BeforeEmb_avg)
 
         if self.args.cfg.use_after_fc_emb == 1:
             for fit_res in results:
@@ -183,17 +186,27 @@ class Client():
         # ------ train multiple epochs ------
         before_fc_emb = defaultdict(list, {})
         after_fc_emb = defaultdict(list, {})
+        extra_loss_embedding, criterion_extra = None, None
         if config['server_round'] > self.args.cfg.use_after_fc_emb_round and self.args.cfg.use_after_fc_emb == 1:
             extra_loss_embedding = self.args.catemb.generate_train_emb(config['AfterEmb_avg'])
             extra_loss_embedding = extra_loss_embedding.to(self.args.device)
             criterion_extra = SupConLoss(self.args, extra_loss_embedding)
-        else:
-            extra_loss_embedding, criterion_extra = None, None
+            
+        p_images_group, p_labels_group = None, None
+        # print('in 0')
+        # print(f'{self.args.cfg.use_before_fc_emb=}')
+        # print(f'{self.args.cfg.use_before_fc_emb_round=}')
+        # print(f"{config['server_round']=}")
+        if config['server_round'] > self.args.cfg.use_before_fc_emb_round and self.args.cfg.use_before_fc_emb == 1:
+            # print('in 1')
+            # p_images_group, p_labels_group = args.catemb.generate_pseudo_data(config['BeforeEmb_avg'], self.args.cfg.gene_num, self.args.cfg.batch_size, self.args.cfg.more_dense)
+            p_images_group, p_labels_group = config['p_images_group'], config['p_labels_group']
+        
 
         for epoch in range(1, self.args.cfg.local_epoch + 1):
             client_loss, before_fc_emb, after_fc_emb = train(self.args, self.train_loader, self.net, self.criterion,
                                                              optimizer, epoch, self.cid, config, extra_loss_embedding,
-                                                             criterion_extra, before_fc_emb, after_fc_emb)
+                                                             criterion_extra, before_fc_emb, after_fc_emb, p_images_group, p_labels_group)
             logger1.info(
                 f"Train_Client{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Train_loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
             if self.args.cfg.wandb: wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
@@ -211,7 +224,7 @@ class Client():
         # ------ Use Before&After Embedding ------
         BeforeEmb_avg, AfterEmb_avg = 0, 0
         if self.args.cfg.use_before_fc_emb == 1:
-            BeforeEmb_avg = self.args.catemb.avg(before_fc_emb)
+            BeforeEmb_avg = self.args.catemb.avg_mean_var(before_fc_emb)
         if self.args.cfg.use_after_fc_emb == 1:
             AfterEmb_avg = self.args.catemb.avg(after_fc_emb)
 
@@ -255,12 +268,18 @@ while round_count < args.cfg.round:
     fit_ins = server.server_conduct(round_count, results)
 
     # ------ Test Aggregate Net ------
-    criterion = SupConLoss(args, args.text_emb)
-    aggregate_net = ClipModel_from_generated(args)
-    aggregate_net = set_parameters(aggregate_net, fit_ins.parameters)
-    loss, accu = test(args, aggregate_net, test_loader, criterion)
+    with torch.no_grad():
+        criterion = SupConLoss(args, args.text_emb)
+        aggregate_net = ClipModel_from_generated(args)
+        aggregate_net = set_parameters(aggregate_net, fit_ins.parameters)
+        loss, accu = test(args, aggregate_net, test_loader, criterion)
     logger1.info(f'*** Round[{round_count}]: Server_Test_Accu[{accu:.3f}] *** ')
-    if args.cfg.wandb: wandb.log({f"Server Test Accu": accu})
+    if args.cfg.wandb: wandb.log({f"Server Test Accu": accu, 'epoch': round_count})
+
+    # ------ Generate BeforeFcEmb ------
+    if fit_ins.config['server_round'] >= args.cfg.use_before_fc_emb_round and args.cfg.use_before_fc_emb == 1:
+        p_images_group, p_labels_group = args.catemb.generate_pseudo_data(fit_ins.config['BeforeEmb_avg'], args.cfg.gene_num, args.cfg.batch_size, args.cfg.more_dense)
+        fit_ins.config['p_images_group'], fit_ins.config['p_labels_group'] = p_images_group, p_labels_group
 
 
 logger1.info(f"-------------------------------------------End All------------------------------------------------")
