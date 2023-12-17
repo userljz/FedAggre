@@ -1,7 +1,7 @@
 cd /home/ljz/FedAggre
 
 #must config
-device=1
+device=7
 yaml=train1.yaml
 # yaml=test.yaml
 # yaml=use_extra_emb.yaml

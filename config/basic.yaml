@@ -39,6 +39,11 @@ use_after_fc_emb_round: 0
 extra_loss_weight: 0.5
 
 reverse_textemb: 0
+mlp_hiddenlayer_num: 1024
 
+use_timm: 0
+only_test_training_labels: 0
+
+select_client_num: 0
 
 

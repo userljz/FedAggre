@@ -1,0 +1,16 @@
+logfile_info: '1214-C100Baseline-FedAvg_vitb32'
+wandb_project: '20231209'
+dirichlet_alpha: 0.1
+
+num_clients: 10
+
+model_name: 'ViT-B/32'
+mlp_hiddenlayer_num: 2048
+client_dataset: 'cifar100'
+num_class: 100
+
+
+local_epoch: 50
+use_mlp: 1
+round: 80
+

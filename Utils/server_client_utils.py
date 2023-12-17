@@ -155,6 +155,52 @@ def test(args, net, testloader, criterion):
 
 
 
+def train_baseline(args, train_loader, model, criterion, optimizer, epoch, cid, config):
+    """one epoch training"""
+    losses = AverageMeter()
+    for idx, (images, labels) in enumerate(train_loader):
+        
+        # ------ Calculate Feats ------
+        images, labels = images.to(args.device), labels.to(args.device)
+        features = model(images)  # [bz, 100]
+    
+        traditional_loss = criterion(features, labels)
+        traditional_loss_num = labels.shape[0]
+
+        loss = traditional_loss 
+
+        losses.update(loss.item(), traditional_loss_num)
+
+        # SGD
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    return losses.avg
+
+
+def test_baseline(args, net, testloader, criterion):
+    """Evaluate the network on the entire test set."""
+    losses = AverageMeter()
+    correct, total = 0, 0
+    net.eval()
+    with torch.no_grad():
+        for images, labels in testloader:
+            images, labels = images.to(args.device), labels.to(args.device)
+            features = net(images)
+
+            loss = criterion(features, labels)
+            losses.update(loss, labels.shape[0])
+
+            # similarity = F.cosine_similarity(features.unsqueeze(1), args.text_emb.unsqueeze(0), dim=2)
+            _, predicted_indices = torch.max(features, dim=1)
+            total += labels.shape[0]
+            correct += (predicted_indices == labels).sum().item()
+
+    _accuracy = correct / total
+    return losses.avg, _accuracy
+
+
 
 class AverageMeter(object):
     def __init__(self):
