@@ -12,7 +12,7 @@ from Utils.cfg_utils import read_yaml
 from Utils.data_utils import load_dataloader_from_generate, load_dataloader
 from Utils.log_utils import cus_logger
 from Utils.typing_utils import FitRes, FitIns
-from Utils.server_client_utils import SupConLoss, train, test, get_parameters, set_parameters, CategoryEmbedding
+from Utils.server_client_utils import SupConLoss, train, test, get_parameters, set_parameters, CategoryEmbedding, train_vae, test_vae, EmbVAE
 from Utils.flwr_utils import aggregate
 
 
@@ -102,6 +102,59 @@ args.catemb = CategoryEmbedding()
 # ------ Initialize DataLoader & Server ------
 train_loaders, test_loader = load_dataloader_from_generate(args, args.cfg.client_dataset, dataloader_num=args.cfg.num_clients)
 
+# ------ Train Each Client's Pseudo Sample Generator ------
+pseudo_samples, pseudo_labels = [], []
+if args.cfg.use_before_fc_emb == 1:
+    EmbVAE_list = []
+    vae_model = EmbVAE(512, 256).to(args.device)
+    for index, train_loader_i in enumerate(train_loaders):
+        
+        optimizer = torch.optim.SGD(vae_model.parameters(), lr=0.01, momentum=0.9, weight_decay=1e-4)
+
+        test_dict = defaultdict(list, {})
+        test_loader = []
+        for image, label in train_loader_i:
+            for i in range(len(label)):
+                image_i = image[i]
+                label_i = label[i]
+                test_dict[label_i.detach().cpu().item()].append(image_i)
+        for key, value in test_dict.items():
+            _img = torch.stack(value)
+            _label = torch.tensor([key for _ in range(_img.size()[0])])
+            # print(_img.size())
+            # print(_label.size())
+            test_loader.append([_img, _label])
+
+        epoch_i = 0
+        sim = 0
+        while sim < 0.8:
+            loss = train_vae(train_loader_i, vae_model, optimizer, epoch_i, args.device)
+            sim, dis = test_vae(vae_model, test_loader, args.device, shuffle=1, noise=1)
+            if epoch_i % 2 == 0:
+                print(f'Client[{index}] Epoch[{epoch_i}] {loss = } | {sim = } | {dis = }')
+            epoch_i += 1
+        
+    
+        gene_emb, gene_label = [], []
+        for img, label in test_loader:
+            img = img.to(args.device)
+            _gene_emb = vae_model.generate(img)
+            gene_emb.append(_gene_emb)
+            gene_label.append(label)
+        gene_emb = torch.cat(gene_emb)
+        gene_label = torch.cat(gene_label)
+        
+        
+        pseudo_samples.append(gene_emb)
+        pseudo_labels.append(gene_label)
+        EmbVAE_list.append(vae_model)
+    pseudo_samples = torch.cat(pseudo_samples).detach()
+    pseudo_labels = torch.cat(pseudo_labels).detach()
+    print(f'{pseudo_samples.size()}')
+    print(f'{pseudo_labels.size()}')
+    
+    
+
 
 def client_fn(cid, _args):
     _model = ClipModel_from_generated(_args)
@@ -137,12 +190,16 @@ def count_labels(data_loader):
 
     return label_counts
 
+previous_select = None
 
 class Server():
-    def __init__(self, args):
+    def __init__(self, args, pseudo_samples=None, pseudo_labels=None):
         self.args = args
         self.BeforeEmb_avg = defaultdict(list, {})
         self.AfterEmb_avg = defaultdict(list, {})
+        self.pseudo_samples = pseudo_samples
+        self.pseudo_labels = pseudo_labels
+        self.previous_select = None
 
     def aggregate_fit(self, server_round, results):
         weights_results = [
@@ -153,10 +210,18 @@ class Server():
         parameters_aggregated = aggregate(weights_results)
 
         if self.args.cfg.use_before_fc_emb == 1:
-            for fit_res in results:
-                _client_dict = fit_res.metrics
-                _BeforeEmb_avg = _client_dict['BeforeEmb_avg']
-                self.BeforeEmb_avg = self.args.catemb.merge_mean_var(self.BeforeEmb_avg, _BeforeEmb_avg)
+            indices_list = torch.randperm(self.pseudo_samples.size(0))
+            selected_indices = indices_list[:self.args.cfg.gene_num]
+            # print(f'****** {selected_indices = }')
+            # if self.previous_select is None:
+            #     print('Previous select is None')
+            # elif torch.equal(selected_indices, self.previous_select):
+            #     print('totally equal')
+            # else: print('not equal')
+            # self.previous_select = selected_indices
+            selected_samples = self.pseudo_samples[selected_indices]
+            selected_labels = self.pseudo_labels[selected_indices]
+            self.BeforeEmb_avg = [selected_samples, selected_labels]
 
         if self.args.cfg.use_after_fc_emb == 1:
             for fit_res in results:
@@ -208,13 +273,7 @@ class Client():
             criterion_extra = SupConLoss(self.args, extra_loss_embedding)
             
         p_images_group, p_labels_group = None, None
-        # print('in 0')
-        # print(f'{self.args.cfg.use_before_fc_emb=}')
-        # print(f'{self.args.cfg.use_before_fc_emb_round=}')
-        # print(f"{config['server_round']=}")
         if config['server_round'] > self.args.cfg.use_before_fc_emb_round and self.args.cfg.use_before_fc_emb == 1:
-            # print('in 1')
-            # p_images_group, p_labels_group = args.catemb.generate_pseudo_data(config['BeforeEmb_avg'], self.args.cfg.gene_num, self.args.cfg.batch_size, self.args.cfg.more_dense)
             p_images_group, p_labels_group = config['p_images_group'], config['p_labels_group']
         
 
@@ -237,14 +296,13 @@ class Client():
             logger1.info(f'Finish saving client model {self.cid}')
 
         # ------ Use Before&After Embedding ------
-        BeforeEmb_avg, AfterEmb_avg = 0, 0
-        if self.args.cfg.use_before_fc_emb == 1:
-            BeforeEmb_avg = self.args.catemb.avg_mean_var(before_fc_emb)
-        if self.args.cfg.use_after_fc_emb == 1:
-            AfterEmb_avg = self.args.catemb.avg(after_fc_emb)
+        # BeforeEmb_avg, AfterEmb_avg = 0, 0
+        # if self.args.cfg.use_before_fc_emb == 1:
+        #     BeforeEmb_avg = self.args.catemb.avg_mean_var(before_fc_emb)
+        # if self.args.cfg.use_after_fc_emb == 1:
+        #     AfterEmb_avg = self.args.catemb.avg(after_fc_emb)
 
-        return FitRes(get_parameters(self.net), len(self.train_loader),
-                      {'BeforeEmb_avg': BeforeEmb_avg, 'AfterEmb_avg': AfterEmb_avg})
+        return FitRes(get_parameters(self.net), len(self.train_loader), {})
 
     def evaluate(self):
         loss, _accuracy = test(self.args, self.net, self.test_loader, self.criterion)
@@ -254,7 +312,7 @@ class Client():
 
 
 # -------- Start FL ------
-server = Server(args)
+server = Server(args, pseudo_samples, pseudo_labels)
 label_counts = count_labels(train_loaders)
 for key, value in label_counts.items():
     logger1.info(f"[{key}]: {value}")
@@ -313,9 +371,13 @@ while round_count < args.cfg.round:
     if args.cfg.wandb: wandb.log({f"Server Test Accu": accu, 'epoch': round_count})
 
     # ------ Generate BeforeFcEmb ------
-    if fit_ins.config['server_round'] >= args.cfg.use_before_fc_emb_round and args.cfg.use_before_fc_emb == 1:
-        p_images_group, p_labels_group = args.catemb.generate_pseudo_data(fit_ins.config['BeforeEmb_avg'], args.cfg.gene_num, args.cfg.batch_size, args.cfg.more_dense)
-        fit_ins.config['p_images_group'], fit_ins.config['p_labels_group'] = p_images_group, p_labels_group
+    if args.cfg.use_before_fc_emb == 1:
+        p_sample_list, p_label_list = fit_ins.config['BeforeEmb_avg']
+        batch_size = args.cfg.batch_size
+        p_sample_group = [p_sample_list[i:i+batch_size] for i in range(0, len(p_sample_list), batch_size)]
+        p_label_group = [p_label_list[i:i+batch_size] for i in range(0, len(p_label_list), batch_size)]
+        
+        fit_ins.config['p_images_group'], fit_ins.config['p_labels_group'] = p_sample_group, p_label_group
 
 
 logger1.info(f"-------------------------------------------End All------------------------------------------------")

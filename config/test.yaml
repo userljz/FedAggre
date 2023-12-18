@@ -1,13 +1,14 @@
 logfile_info: 'test'
 wandb_project: '20231207'
 wandb: 0
-client_dataset: 'cifar10'
-num_class: 10
 
-num_clients: 2
+num_clients: 4
 batch_size: 64
 dirichlet_alpha: 0.1
-model_name: 'RN50'
+model_name: 'ViT-B/32'
+mlp_hiddenlayer_num: 2048
+client_dataset: 'cifar100'
+num_class: 100
 # RN50 RN101 RN50x4 ViT-B/32 ViT-B/16
 
 round: 3

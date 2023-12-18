@@ -71,16 +71,16 @@ def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, e
     losses = AverageMeter()
     for idx, (images, labels) in enumerate(train_loader):
         # ------ Use Before Fc Emb ------
-        if args.cfg.use_before_fc_emb == 1:
-            before_fc_emb = args.catemb.update(before_fc_emb, images, labels)
+        # if args.cfg.use_before_fc_emb == 1:
+        #     before_fc_emb = args.catemb.update(before_fc_emb, images, labels)
 
         # ------ Calculate Feats ------
         images, labels = images.to(args.device), labels.to(args.device)
         features = model.get_img_feat(images)
 
         # ------ Use After Fc Emb ------
-        if args.cfg.use_after_fc_emb:
-            after_fc_emb = args.catemb.update(after_fc_emb, features, labels)
+        # if args.cfg.use_after_fc_emb:
+        #     after_fc_emb = args.catemb.update(after_fc_emb, features, labels)
 
         # ------ Compute traditional_loss ------
         traditional_loss_num = 0
@@ -94,7 +94,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, e
         # ------ Compute loss from Before Fc Emb ------
         p_loss_num = 0
         p_loss = 0
-        if args.cfg.use_before_fc_emb == 1 and config['server_round'] > args.cfg.use_before_fc_emb_round:  # make sure it's not the first round
+        if args.cfg.use_before_fc_emb == 1:  # make sure it's not the first round
             if idx < len(p_labels_group):
                 # print(f'{len(p_images_group)=}')
                 # print(f'{len(p_labels_group)=}')
@@ -361,3 +361,158 @@ class CategoryEmbedding(object):
         # print(f'{len(p_sample_group)=}')
         # print(f'{p_sample_group[0].size()=}')
         return p_sample_group, p_label_group
+
+def test_vae(net, testloader, device='cuda', shuffle=1, noise=1):
+    """Evaluate the network on the entire test set."""
+    mean_sum, dist_sum, total_num = 0, 0, 0
+    net.eval()
+    with torch.no_grad():
+        for images, labels in testloader:
+            
+            images = images.to(device)
+            images_s = images
+            features = net.generate(images_s, shuffle=shuffle, noise=noise)
+            similarity = F.cosine_similarity(features, images, dim=1)
+            l2_distances = F.pairwise_distance(features*100, images*100, p=2)
+            
+            mean = torch.sum(similarity)
+            dist = torch.sum(l2_distances)
+            mean_sum += mean
+            dist_sum += dist
+            total_num += len(labels)
+        return mean_sum/total_num, dist_sum/total_num
+
+
+def train_vae(train_loader, model, optimizer, epoch, device):
+    """one epoch training"""
+    losses = 0
+    for idx, (images, labels) in enumerate(train_loader):
+        # ------ Calculate Feats ------
+        images = images.to(device)
+        features = model(images)  # [self.decode(z), input, mu, log_var]
+        _loss = model.loss_function(features)
+        # SGD
+        optimizer.zero_grad()
+        _loss['loss'].backward()
+        optimizer.step()
+        losses += _loss['loss']
+    return losses
+
+
+
+class EmbVAE(nn.Module):
+
+    def __init__(self,
+                 in_channels: int,
+                 latent_dim: int,
+                 ) -> None:
+        super(EmbVAE, self).__init__()
+        self.latent_dim = latent_dim
+        
+        self.encoder = nn.Sequential(nn.Linear(in_channels, latent_dim))
+        self.fc_mu = nn.Linear(latent_dim, latent_dim)
+        self.fc_var = nn.Linear(latent_dim, latent_dim)
+        self.decoder = nn.Sequential(nn.Linear(latent_dim, in_channels))
+
+
+    def encode(self, input):
+        """
+        :param input: [num, 512]
+        :return: [[num,256], [num,256]]
+        """
+        result = self.encoder(input)  # 512 -> 256
+
+        # Split the result into mu and var components
+        # of the latent Gaussian distribution
+        mu = self.fc_mu(result)
+        log_var = self.fc_var(result)
+
+        return [mu, log_var]
+
+    def decode(self, z):
+        """
+        Maps the given latent emb into the image space.
+        :param z: (Tensor) [num x 512]
+        :return: (Tensor) [num x 512]
+        """
+        result = self.decoder(z)
+        return result
+
+    def reparameterize(self, mu, logvar):
+        """
+        Reparameterization trick to sample from N(mu, var) from
+        N(0,1).
+        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+        :return: (Tensor) [B x D]
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
+
+    def forward(self, input, noise=1):
+        mu, log_var = self.encode(input)
+        z = self.reparameterize(mu, log_var)
+        if noise > 0:
+            v_var = z.var(dim=0, unbiased=False)
+            std_dev = torch.sqrt(v_var) / noise
+            if std_dev.ne(0).all():
+                z = torch.normal(z, std_dev) 
+        return [self.decode(z), input, mu, log_var]
+
+
+
+    def loss_function(self,
+                      args,
+                      ) -> dict:
+        recons = args[0]
+        input = args[1]
+        mu = args[2]
+        log_var = args[3]
+
+        kld_weight = 0.00025 # Account for the minibatch samples from the dataset
+        recons_loss =F.mse_loss(recons, input)
+        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+
+        loss = recons_loss + kld_weight * kld_loss
+        return {'loss': loss, 'Reconstruction_Loss': recons_loss.detach(), 'KLD': kld_loss.detach()}
+
+    # def sample(self,
+    #            num_samples,
+    #            current_device):
+    #     """
+    #     Samples from the latent space and return the corresponding
+    #     image space map.
+    #     :param num_samples: (Int) Number of samples
+    #     :param current_device: (Int) Device to run the model
+    #     :return: (Tensor)
+    #     """
+    #     z = torch.randn(num_samples,
+    #                     self.latent_dim)
+
+    #     z = z.to(current_device)
+
+    #     samples = self.decode(z)
+    #     return samples
+
+    def generate(self, x, noise=1, shuffle=1):
+        """
+        return: [num x 512]
+        """
+        if shuffle == 1:
+            x = self.random_shuffle(x)
+        return self.forward(x, noise=noise)[0]
+
+    def random_shuffle(self, img_emb):
+        """
+        Randomly shuffle the corresponding dimensions
+        :param img_emb: [num, 512]
+        :return: [num, 512]
+        """
+        shuffled_list = []
+        for rol_i in range(img_emb.size(1)):
+            shuffled_indices_col1 = torch.randperm(img_emb.size(0))
+            shuffled_col1 = img_emb[shuffled_indices_col1, rol_i]
+            shuffled_list.append(shuffled_col1)
+        shuffled_test_list = torch.stack(shuffled_list, dim=1)
+        return shuffled_test_list
