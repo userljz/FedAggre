@@ -1,23 +1,16 @@
-logfile_info: '1218-New_generator1_noBefore'
-wandb_project: '20231216'
-num_clients: 10
-select_client_num: 0
+logfile_info: '1224-emnist_20Clients_alpha0.5_NoBefore'
+wandb_project: '20231224'
+num_clients: 20
 
-dirichlet_alpha: 0.1
-local_lr: 0.005
+dirichlet_alpha: 0.5
 
-model_name: 'ViT-B/32'
-mlp_hiddenlayer_num: 2048
-client_dataset: 'cifar100'
-num_class: 100
+client_dataset: 'emnist'  # cifar100
+num_class: 47  # 100
 
+# client_dataset: 'PathMNIST'
+# num_class: 9
 
-local_epoch: 100
-use_mlp: 1
-round: 40
 
 use_before_fc_emb: 0
-gene_num: 10000
-use_before_fc_emb_round: 1
 
 

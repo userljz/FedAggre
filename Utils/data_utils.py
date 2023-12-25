@@ -169,6 +169,34 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
         test_img = test_img.float()
         test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
 
+    elif dataset_name == 'PathMNIST':
+        if args.cfg.only_test_training_labels == 1:
+            print('Please specify the test_data_per_class')
+        if args.cfg.model_name == 'ViT-B/32':
+            train_img = torch.load('/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_vitb32Train_imgemb.pth')
+            train_label = torch.load('/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_vitb32Train_labels.pth')
+            train_img = train_img.float()
+            train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
+
+            test_img = torch.load('/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_vitb32Test_imgemb.pth')
+            test_label = torch.load('/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_vitb32Test_labels.pth')
+            test_img = test_img.float()
+            test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
+
+
+    elif dataset_name == 'emnist':
+        test_data_per_class = 400
+        if args.cfg.model_name == 'ViT-B/32':
+            train_img = torch.load('/home/ljz/dataset/emnist_generated_vitb32/emnist_vitb32Train_imgemb.pth')
+            train_label = torch.load('/home/ljz/dataset/emnist_generated_vitb32/emnist_vitb32Train_labels.pth')
+            train_img = train_img.float()
+            train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
+
+            test_img = torch.load('/home/ljz/dataset/emnist_generated_vitb32/emnist_vitb32Test_imgemb.pth')
+            test_label = torch.load('/home/ljz/dataset/emnist_generated_vitb32/emnist_vitb32Test_labels.pth')
+            test_img = test_img.float()
+            test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
+
 
     elif dataset_name == 'cifar100':
         test_data_per_class = 100
@@ -209,7 +237,10 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
         # test_label = torch.load('/home/ljz/dataset/cifar100_gene_TimmRN50/TestLabel_PretrainedRN50_CIFAR100.pth')
         # test_img = test_img.float()
         # test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
+    else:
+        print('Please specify the dataset')
 
+    
     if dataloader_num == 1:
         train_loader = torch.utils.data.DataLoader(
             train_img_label_list,

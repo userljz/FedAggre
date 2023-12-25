@@ -65,62 +65,35 @@ def set_parameters(net, parameters: List[np.ndarray]):
     net.load_state_dict(state_dict, strict=True)
     return net
 
-def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, extra_loss_embedding, criterion_extra,
-          before_fc_emb=None, after_fc_emb=None, p_images_group=None, p_labels_group=None):
+def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, p_images_group=None, p_labels_group=None):
     """one epoch training"""
     losses = AverageMeter()
     for idx, (images, labels) in enumerate(train_loader):
-        # ------ Use Before Fc Emb ------
-        # if args.cfg.use_before_fc_emb == 1:
-        #     before_fc_emb = args.catemb.update(before_fc_emb, images, labels)
-
         # ------ Calculate Feats ------
         images, labels = images.to(args.device), labels.to(args.device)
         features = model.get_img_feat(images)
 
-        # ------ Use After Fc Emb ------
-        # if args.cfg.use_after_fc_emb:
-        #     after_fc_emb = args.catemb.update(after_fc_emb, features, labels)
-
         # ------ Compute traditional_loss ------
-        traditional_loss_num = 0
-        traditional_loss = 0
-        if config['server_round'] > args.cfg.use_traditional_loss_lower_limit:
-            if args.cfg.use_traditional_loss_upper_limit == 0 or config[
-                'server_round'] < args.cfg.use_traditional_loss_upper_limit:
-                traditional_loss = criterion(features, labels)
-                traditional_loss_num = labels.shape[0]
+        traditional_loss = criterion(features, labels)
+        traditional_loss_num = labels.shape[0]
+        loss = traditional_loss
+        bsz = traditional_loss_num
 
         # ------ Compute loss from Before Fc Emb ------
-        p_loss_num = 0
-        p_loss = 0
-        if args.cfg.use_before_fc_emb == 1:  # make sure it's not the first round
+        
+        if args.cfg.use_before_fc_emb == 1 and config['server_round'] > 1:  # make sure it's not the first round
+            
             if idx < len(p_labels_group):
-                # print(f'{len(p_images_group)=}')
-                # print(f'{len(p_labels_group)=}')
-                
                 p_images, p_labels = p_images_group[idx], p_labels_group[idx]
-                # print(f'{len(p_images)=}')
-                # print(f'{len(p_labels)=}')
                 p_images, p_labels = p_images.to(args.device), p_labels.to(args.device)
                 p_features = model.get_img_feat(p_images)
                 p_loss = criterion(p_features, p_labels)
                 p_loss_num = p_labels.shape[0]
-
-        # ------ Compute loss from After Fc Emb ------
-        extra_loss_num = 0
-        extra_loss = 0
-        extra_loss_weight = 0
-        if args.cfg.use_after_fc_emb == 1 and config['server_round'] > args.cfg.use_after_fc_emb_round:  # make sure it's not the first round
-            extra_loss = criterion_extra(features, labels)
-            extra_loss_num = labels.shape[0]
-            extra_loss_weight = args.cfg.extra_loss_weight
-
-        # ------ Loss Summary ------
-        loss = extra_loss_weight * extra_loss + (1 - extra_loss_weight) * traditional_loss + p_loss
+                
+                loss = loss + p_loss
+                bsz = bsz + p_loss_num
 
         # update metric
-        bsz = int((1 - extra_loss_weight) * traditional_loss_num + extra_loss_weight * extra_loss_num) + p_loss_num
         losses.update(loss.item(), bsz)
 
         # SGD
@@ -128,7 +101,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, e
         loss.backward()
         optimizer.step()
 
-    return losses.avg, before_fc_emb, after_fc_emb
+    return losses.avg
 
 
 def test(args, net, testloader, criterion):
@@ -373,7 +346,7 @@ def test_vae(net, testloader, device='cuda', shuffle=1, noise=1):
             images_s = images
             features = net.generate(images_s, shuffle=shuffle, noise=noise)
             similarity = F.cosine_similarity(features, images, dim=1)
-            l2_distances = F.pairwise_distance(features*100, images*100, p=2)
+            l2_distances = F.pairwise_distance(features, images, p=2)
             
             mean = torch.sum(similarity)
             dist = torch.sum(l2_distances)
@@ -383,20 +356,20 @@ def test_vae(net, testloader, device='cuda', shuffle=1, noise=1):
         return mean_sum/total_num, dist_sum/total_num
 
 
-def train_vae(train_loader, model, optimizer, epoch, device):
+def train_vae(train_loader, vae_model, vae_optimizer, epoch, device):
     """one epoch training"""
-    losses = 0
+    losses_vae = 0
     for idx, (images, labels) in enumerate(train_loader):
         # ------ Calculate Feats ------
         images = images.to(device)
-        features = model(images)  # [self.decode(z), input, mu, log_var]
-        _loss = model.loss_function(features)
+        features = vae_model(images)  # [self.decode(z), input, mu, log_var]
+        _loss = vae_model.loss_function(features)
         # SGD
-        optimizer.zero_grad()
+        vae_optimizer.zero_grad()
         _loss['loss'].backward()
-        optimizer.step()
-        losses += _loss['loss']
-    return losses
+        vae_optimizer.step()
+        losses_vae += _loss['loss']
+    return losses_vae
 
 
 
@@ -409,10 +382,10 @@ class EmbVAE(nn.Module):
         super(EmbVAE, self).__init__()
         self.latent_dim = latent_dim
         
-        self.encoder = nn.Sequential(nn.Linear(in_channels, latent_dim))
+        self.encoder = nn.Sequential(nn.Linear(in_channels, latent_dim), nn.ReLU(), nn.Linear(latent_dim, latent_dim))
         self.fc_mu = nn.Linear(latent_dim, latent_dim)
         self.fc_var = nn.Linear(latent_dim, latent_dim)
-        self.decoder = nn.Sequential(nn.Linear(latent_dim, in_channels))
+        self.decoder = nn.Sequential(nn.Linear(latent_dim, latent_dim), nn.ReLU(), nn.Linear(latent_dim, in_channels))
 
 
     def encode(self, input):
@@ -446,7 +419,7 @@ class EmbVAE(nn.Module):
         :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
         :return: (Tensor) [B x D]
         """
-        std = torch.exp(0.5 * logvar)
+        std = torch.exp(0.001 * logvar)
         eps = torch.randn_like(std)
         return eps * std + mu
 
@@ -478,7 +451,7 @@ class EmbVAE(nn.Module):
         return {'loss': loss, 'Reconstruction_Loss': recons_loss.detach(), 'KLD': kld_loss.detach()}
 
     # def sample(self,
-    #            num_samples,
+    #            num_samples,c
     #            current_device):
     #     """
     #     Samples from the latent space and return the corresponding
@@ -516,3 +489,151 @@ class EmbVAE(nn.Module):
             shuffled_list.append(shuffled_col1)
         shuffled_test_list = torch.stack(shuffled_list, dim=1)
         return shuffled_test_list
+
+
+
+class EmbAE(nn.Module):
+    def __init__(self,
+                 in_channels: int,
+                 latent_dim: int,
+                 ) -> None:
+        super(EmbAE, self).__init__()
+        self.latent_dim = latent_dim
+        
+        self.encoder = nn.Sequential(nn.Linear(in_channels, 256), 
+                                     nn.ReLU(),
+                                     nn.Linear(256, latent_dim),
+                                     ).to('cuda')
+        
+        self.decoder = nn.Sequential(nn.Linear(latent_dim, 256),
+                                     nn.ReLU(),
+                                     nn.Linear(256, in_channels),
+                                     ).to('cuda')
+
+
+
+    def encode(self, input):
+        """
+        :param input: [num, 512]
+        :return: [[num,256], [num,256]]
+        """
+        result = self.encoder(input)  # 512 -> 256
+        return result
+
+    def decode(self, z):
+        """
+        Maps the given latent emb into the image space.
+        :param z: (Tensor) [num x 512]
+        :return: (Tensor) [num x 512]
+        """
+        result = self.decoder(z)
+        return result
+
+
+    def forward(self, input, noise=1):
+        z = self.encode(input)
+        # print('****** Analyze z ******')
+        # print(f'{torch.max(z)}')
+        # print(f'{torch.min(z)}')
+        # print(f'{torch.median(z)}')
+        if noise > 0:
+            # 假设latent_vector是你的64维潜在向量
+            noise = torch.randn(z.size()) * 0.1 # noise_std是噪声的标准差
+            noise = noise.to('cuda')
+            z = z + noise
+            # v_var = z.var(dim=0, unbiased=False)
+            # std_dev = torch.sqrt(v_var) / noise
+            # if (std_dev != 0).all():
+            #     z = torch.normal(z, std_dev) 
+        return [self.decode(z), input]
+
+
+
+    def loss_function(self,
+                      args,
+                      label
+                      ) -> dict:
+        recons = args[0]
+        input1 = args[1]
+
+        recons = recons / recons.norm(dim=-1, keepdim=True)
+        input1 = input1 / input1.norm(dim=-1, keepdim=True)
+
+        recons_loss =F.mse_loss(recons, input1)
+
+        # target = torch.eye(recons.size(0)).to('cuda')
+        similarity_matrix = (label[:, None] == label[None, :]).int().to('cuda')
+
+        logits_per_image = recons @ input1.t()
+        loss = logits_per_image / logits_per_image.norm(dim=-1, keepdim=True)
+        
+        loss_sim = torch.where(similarity_matrix == 1, 1 - loss, loss-0.2)
+        loss_sim = torch.clamp(loss_sim, min=0)
+        loss_sim = torch.sum(loss_sim)
+
+        loss_sum = loss_sim * 0.1 + recons_loss * 10000
+
+        return {'loss': loss_sum}
+
+    def generate(self, x, noise=1, shuffle=0):
+        """
+        return: [num x 512]
+        """
+        self.encoder.eval()
+        self.decoder.eval()
+        with torch.no_grad():
+            if shuffle == 1:
+                x = self.random_shuffle(x)
+            x = self.forward(x, noise=noise)[0]
+        return x
+
+    def random_shuffle(self, img_emb):
+        """
+        Randomly shuffle the corresponding dimensions
+        :param img_emb: [num, 512]
+        :return: [num, 512]
+        """
+        shuffled_list = []
+        for rol_i in range(img_emb.size(1)):
+            shuffled_indices_col1 = torch.randperm(img_emb.size(0))
+            shuffled_col1 = img_emb[shuffled_indices_col1, rol_i]
+            shuffled_list.append(shuffled_col1)
+        shuffled_test_list = torch.stack(shuffled_list, dim=1)
+        return shuffled_test_list
+    
+
+def generate_from_meanvar(CatEmbDict_avg, gene_num, batch_size):
+    """
+    First sort the average embedding, in the sort of classes
+
+    CatEmbDict_avg: {'label1': ([mean, var], num), ...}
+
+    Return: [gene_num, 1024], [gene_num]
+    """
+    p_sample_list = []
+    p_label_list = []
+    class_num = len(CatEmbDict_avg.keys())
+    for k, v in CatEmbDict_avg.items():
+        mean = v[0].to('cuda')
+        var = v[1].to('cuda')
+        std_dev = torch.sqrt(var)
+        pseudo_samples = [torch.normal(mean, std_dev) for _ in range(int(gene_num/class_num+1))]  # [num, 1024]
+        pseudo_samples = torch.stack(pseudo_samples, dim=0)  # [num, 1024]
+        pseudo_labels = torch.full((int(gene_num/class_num+1),), k)  # [num,]
+
+        p_sample_list.append(pseudo_samples)  # [[num,1024], [num, 1024], ...]
+        p_label_list.append(pseudo_labels)  # [[num,], [num, ], ...]
+    
+    p_sample_cat = torch.cat(p_sample_list, dim=0)
+    p_label_cat = torch.cat(p_label_list, dim=0)
+
+    perm = torch.randperm(len(p_label_cat))
+    perm = perm[:gene_num]
+
+    p_sample_list = [p_sample_cat[i] for i in perm]
+    p_label_list = [p_label_cat[i] for i in perm]
+
+    p_sample_group = [torch.stack(p_sample_list[i:i+batch_size]) for i in range(0, len(p_sample_list), batch_size)]
+    p_label_group = [torch.stack(p_label_list[i:i+batch_size]) for i in range(0, len(p_label_list), batch_size)]
+
+    return p_sample_group, p_label_group

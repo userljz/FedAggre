@@ -1,11 +1,12 @@
 cd /home/ljz/FedAggre
 
 #must config
-device=3
+device=0
 # yaml=train1.yaml
 yaml=test.yaml
 # yaml=use_extra_emb.yaml
 
+export CUDA_LAUNCH_BLOCKING=1
 CUDA_VISIBLE_DEVICES=$device python fedaggre.py --yaml_name $yaml  #&> ./log/test
 
 # stdbuf -i0 -o0 -e0 python fedaggre.py --yaml_name $yaml  #&> ./log/test1

@@ -7,10 +7,10 @@ num_class: 10
 num_clients: 10
 batch_size: 64
 dirichlet_alpha: 0.1
-model_name: 'RN50'
+model_name: 'ViT-B/32'
 # RN50 RN101 RN50x4 ViT-B/32 ViT-B/16
 
-round: 1000
+round: 40
 
 device: 'cuda'
 
@@ -18,32 +18,26 @@ dataset_path: "../dataset"
 save_client_model: 0
 
 margin: 0.2
-local_lr: 0.001
+local_lr: 0.005
 local_momentum: 0.9
 local_weight_decay: 1e-4
-local_epoch: 4
-use_mlp: 0
+local_epoch: 100
+use_mlp: 1
 
-use_traditional_loss_lower_limit: 0
-use_traditional_loss_upper_limit: 0
 use_softmax: 0
 
 use_before_fc_emb: 0
-gene_num: 32
-use_before_fc_emb_round: 0
-more_dense: 1
+gene_num: 10000
 
 
-use_after_fc_emb: 0
-use_after_fc_emb_round: 0
-extra_loss_weight: 0.5
 
 reverse_textemb: 0
-mlp_hiddenlayer_num: 1024
+mlp_hiddenlayer_num: 2048
 
 use_timm: 0
 only_test_training_labels: 0
 
 select_client_num: 0
+use_privacy_generator: 0
 
 

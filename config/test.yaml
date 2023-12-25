@@ -7,8 +7,8 @@ batch_size: 64
 dirichlet_alpha: 0.1
 model_name: 'ViT-B/32'
 mlp_hiddenlayer_num: 2048
-client_dataset: 'cifar100'
-num_class: 100
+client_dataset: 'PathMNIST'
+num_class: 9
 # RN50 RN101 RN50x4 ViT-B/32 ViT-B/16
 
 round: 3
@@ -29,7 +29,7 @@ use_traditional_loss_upper_limit: 0
 use_softmax: 0
 
 use_before_fc_emb: 1  # 1 or 0
-gene_num: 100
+gene_num: 1000
 use_before_fc_emb_round: 1  # Minimum is 1
 
 
