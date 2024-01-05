@@ -79,8 +79,21 @@ def dirichlet_split_noniid(args, train_labels, alpha, n_clients):
             client_idcs[i] += [idcs]
 
     client_idcs = [np.concatenate(idcs) for idcs in client_idcs]
-
-    return client_idcs
+    
+    # 后处理:防止某个Client一个样本也没有分到, 保证每个Client至少分到一个Sample
+    sorted_client_idcs = sorted(client_idcs, key=len)
+    
+    client_idcs_without_0 = []
+    used_data_from_other_client = 0
+    for idx, client_i in enumerate(sorted_client_idcs[:-1]):
+        if len(client_i) == 0:
+            _client_i = np.array([sorted_client_idcs[-1][used_data_from_other_client]])
+            used_data_from_other_client += 1
+            client_idcs_without_0.append(_client_i)
+        else:
+            client_idcs_without_0.append(client_i)
+    client_idcs_without_0.append(sorted_client_idcs[-1][used_data_from_other_client:])    
+    return client_idcs_without_0
 
 
 def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
@@ -155,6 +168,7 @@ def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
         return train_loaders, testloader
 
 
+# 20240103 Currently Use
 def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
     set_random_seed()
     if dataset_name == 'cifar10':
@@ -169,17 +183,17 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
         test_img = test_img.float()
         test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
 
-    elif dataset_name == 'PathMNIST':
+    elif dataset_name == 'PathMNIST' or dataset_name == 'OrganAMNIST' or dataset_name == 'emnist62':
         if args.cfg.only_test_training_labels == 1:
             print('Please specify the test_data_per_class')
         if args.cfg.model_name == 'ViT-B/32':
-            train_img = torch.load('/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_vitb32Train_imgemb.pth')
-            train_label = torch.load('/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_vitb32Train_labels.pth')
+            train_img = torch.load(f'/home/ljz/dataset/{dataset_name}_generated_vitb32/{dataset_name}_vitb32Train_imgemb.pth')
+            train_label = torch.load(f'/home/ljz/dataset/{dataset_name}_generated_vitb32/{dataset_name}_vitb32Train_labels.pth')
             train_img = train_img.float()
             train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
 
-            test_img = torch.load('/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_vitb32Test_imgemb.pth')
-            test_label = torch.load('/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_vitb32Test_labels.pth')
+            test_img = torch.load(f'/home/ljz/dataset/{dataset_name}_generated_vitb32/{dataset_name}_vitb32Test_imgemb.pth')
+            test_label = torch.load(f'/home/ljz/dataset/{dataset_name}_generated_vitb32/{dataset_name}_vitb32Test_labels.pth')
             test_img = test_img.float()
             test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
 
@@ -258,7 +272,7 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
 
         # return non-iid multi-clients trainloaders
         labels = np.array(train_label)
-        client_idcs = dirichlet_split_noniid(args, labels, args.cfg.dirichlet_alpha, args.cfg.num_clients)
+        client_idcs = dirichlet_split_noniid(args, labels, args.cfg.dirichlet_alpha, dataloader_num)
         client_trainsets = []
         for client_i in client_idcs:
             client_trainsets.append(Subset(train_img_label_list, client_i))
@@ -300,6 +314,7 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
                 test_loader.append(DataLoader(i, batch_size=args.cfg.batch_size, shuffle=False))
 
         return train_loaders, test_loader
+
 
 def label_collect(test_loader):
     label_list = []

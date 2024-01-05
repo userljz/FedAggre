@@ -20,10 +20,16 @@ from Utils.flwr_utils import aggregate
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--yaml_name', type=str, default='basic.yaml', help='config file name')
-parser.add_argument('--margin', type=float)
-parser.add_argument('--use_mlp', type=int)
+parser.add_argument('--dirichlet_alpha', type=float)
+parser.add_argument('--use_before_fc_emb', type=int)
 parser.add_argument('--local_lr', type=float)
 parser.add_argument('--logfile_info', type=str)
+parser.add_argument('--client_dataset', type=str)
+parser.add_argument('--wandb_project', type=str)
+parser.add_argument('--strategy', type=str)
+parser.add_argument('--round', type=int)
+parser.add_argument('--gene_num', type=int)
+parser.add_argument('--select_client_num', type=int)
 args = parser.parse_args()
 args_command = vars(args)
 
@@ -45,11 +51,26 @@ if args.cfg.logfile_info == 'test':
     print(type(args.cfg.use_softmax))
 
 
+
+
+
+# ------ Number Classes Config ------
+if args.cfg.client_dataset == 'cifar100':
+    args.cfg.num_class = 100
+elif args.cfg.client_dataset == 'emnist':
+    args.cfg.num_class = 47
+elif args.cfg.client_dataset == 'PathMNIST':
+    args.cfg.num_class = 9
+elif args.cfg.client_dataset == 'OrganAMNIST':
+    args.cfg.num_class = 11
+elif args.cfg.client_dataset == 'emnist62':
+    args.cfg.num_class = 62
+else:
+    print('Please specify the num_class')
+
 # ------wandb config------
 if args.cfg.wandb:
     wandb.init(project=args.cfg["wandb_project"], name=args.cfg["logfile_info"], config=args.cfg)
-
-
 
 # ------log config------
 log_name = f'{cfg.wandb_project}_{cfg.logfile_info}_{cfg.client_dataset}_{cfg.round}_{cfg.num_clients}'
@@ -84,17 +105,18 @@ print_dict(args)
 
 # ============================================================================ #
 # Use Category N text Emb
-if args.cfg.client_dataset == 'cifar10':
+if args.cfg.client_dataset == 'cifar100':
     if args.cfg.model_name == 'RN50':
         text_emb = torch.load(f'/home/ljz/dataset/cifar100_classn_text/cifar100_classn_RN50_textemb.pth')
     elif args.cfg.model_name == 'ViT-B/32':
         text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_classn_vitb32_textemb.pth')
-elif args.cfg.client_dataset == 'emnist':
+elif args.cfg.client_dataset == 'emnist' or args.cfg.client_dataset == 'emnist62':
     if args.cfg.model_name == 'ViT-B/32':
-        text_emb = torch.load(f'/home/ljz/dataset/emnist_generated_vitb32/emnist_classn_vitb32_textemb.pth')
-elif args.cfg.client_dataset == 'PathMNIST':
+        text_emb = torch.load(f'/home/ljz/dataset/{args.cfg.client_dataset}_generated_vitb32/{args.cfg.client_dataset}_classn_vitb32_textemb.pth')
+        # text_emb = torch.load(f'/home/ljz/dataset/emnist_generated_vitb32/emnist_vitb32_textemb.pth')
+elif args.cfg.client_dataset == 'PathMNIST' or args.cfg.client_dataset == 'OrganAMNIST':
     if args.cfg.model_name == 'ViT-B/32':
-        text_emb = torch.load(f'/home/ljz/dataset/PathMNIST_generated_vitb32/PathMNIST_classn_vitb32_textemb.pth')
+        text_emb = torch.load(f'/home/ljz/dataset/{args.cfg.client_dataset}_generated_vitb32/{args.cfg.client_dataset}_classn_vitb32_textemb.pth')
 
 else:
     print('Please specify the dataset')
@@ -116,8 +138,8 @@ if args.cfg.use_before_fc_emb == 1:
         origin_img_info = torch.load('origin_img_info.pth')
     elif args.cfg.client_dataset == 'emnist':
         origin_img_info = torch.load('emnist_origin_img_info.pth')
-    elif args.cfg.client_dataset == 'PathMNIST':
-        origin_img_info = torch.load('PathMNIST_origin_img_info.pth')
+    elif args.cfg.client_dataset == 'PathMNIST' or args.cfg.client_dataset == 'OrganAMNIST' or args.cfg.client_dataset == 'emnist62':
+        origin_img_info = torch.load(f'{args.cfg.client_dataset}_origin_img_info.pth')
     else:
         print('Please specify the dataset')
     # for k,v in gene_img_info_summary.items():
@@ -281,7 +303,6 @@ class Client():
         # ------ Use Pseudo Emb ------
         p_images_group, p_labels_group = None, None
         if self.args.cfg.use_before_fc_emb == 1 and config['server_round'] > 1:
-            # print('into use_before')
             CatEmbDict_avg = config['BeforeEmb_avg']
             gene_num = self.args.cfg.gene_num
             batch_size = self.args.cfg.batch_size
@@ -291,22 +312,20 @@ class Client():
         # ------ train multiple epochs ------
         for epoch in range(1, self.args.cfg.local_epoch + 1):
             client_loss = train(self.args, self.train_loader, self.net, self.criterion,
-                                                             optimizer, epoch, self.cid, config, p_images_group, p_labels_group)
-            logger1.info(
-                f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
+                                optimizer, epoch, self.cid, config, p_images_group, p_labels_group)
+            logger1.info(f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
             if self.args.cfg.wandb: wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
 
         return FitRes(get_parameters(self.net), len(self.train_loader), {})
 
-    def evaluate(self):
+    def evaluate(self, config):
         loss, _accuracy = test(self.args, self.net, self.test_loader, self.criterion)
-        logger1.info(f'Val_Client[{self.cid}], Accu[{_accuracy:.3f}], Loss[{loss:.3f}]')
+        logger1.info(f"Round[{config['server_round']}]Val_Client[{self.cid}], Accu[{_accuracy:.3f}], Loss[{loss:.3f}]")
         if self.args.cfg.wandb: wandb.log({f"Val_Client{self.cid}|Accu:": _accuracy})
         return float(loss), float(_accuracy)  # ljz
 
 
 # -------- Start FL ------
-# server = Server(args, gene_img_info_summary)
 server = Server(args, used_dict)
 label_counts = count_labels(train_loaders)
 for key, value in label_counts.items():
@@ -316,10 +335,12 @@ round_count = 0
 while round_count < args.cfg.round:
     round_count += 1
     logger1.info(f'*** Round [{round_count}] ***')
-    # ------ Init First Round ------
+    # ------ Config Round ------
     if round_count == 1:
         param = get_parameters(ClipModel_from_generated(args))
         fit_ins = FitIns(param, {'server_round': 1})
+    else:
+        fit_ins.config['server_round'] = round_count
 
     # ------ Train Clients ------
     results = []
@@ -345,7 +366,7 @@ while round_count < args.cfg.round:
         results.append(fit_res)
 
         # --- Evaluate One Client
-        loss, accu = client.evaluate()
+        loss, accu = client.evaluate(fit_ins.config)
         accu_list.append(accu)
         loss_list.append(loss)
 

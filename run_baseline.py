@@ -20,10 +20,18 @@ from Utils.flwr_utils import aggregate
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--yaml_name', type=str, default='basic.yaml', help='config file name')
-parser.add_argument('--margin', type=float)
-parser.add_argument('--use_mlp', type=int)
+parser.add_argument('--dirichlet_alpha', type=float)
+parser.add_argument('--use_before_fc_emb', type=int)
 parser.add_argument('--local_lr', type=float)
 parser.add_argument('--logfile_info', type=str)
+parser.add_argument('--client_dataset', type=str)
+parser.add_argument('--wandb_project', type=str)
+parser.add_argument('--strategy', type=str)
+parser.add_argument('--round', type=int)
+parser.add_argument('--gene_num', type=int)
+parser.add_argument('--select_client_num', type=int)
+
+
 args = parser.parse_args()
 args_command = vars(args)
 
@@ -50,6 +58,19 @@ if args.cfg.wandb:
     wandb.init(project=args.cfg["wandb_project"], name=args.cfg["logfile_info"], config=args.cfg)
 
 
+# ------ Number Classes Config ------
+if args.cfg.client_dataset == 'cifar100':
+    args.cfg.num_class = 100
+elif args.cfg.client_dataset == 'emnist':
+    args.cfg.num_class = 47
+elif args.cfg.client_dataset == 'PathMNIST':
+    args.cfg.num_class = 9
+elif args.cfg.client_dataset == 'emnist62':
+    args.cfg.num_class = 62
+elif args.cfg.client_dataset == 'OrganAMNIST':
+    args.cfg.num_class = 11
+else:
+    print('Please specify the num_class')
 
 # ------log config------
 log_name = f'{cfg.wandb_project}_{cfg.logfile_info}_{cfg.client_dataset}_{cfg.round}_{cfg.num_clients}'
@@ -141,8 +162,7 @@ def count_labels(data_loader):
 class Server():
     def __init__(self, args):
         self.args = args
-        self.BeforeEmb_avg = defaultdict(list, {})
-        self.AfterEmb_avg = defaultdict(list, {})
+        
 
     def aggregate_fit(self, server_round, results):
         weights_results = [
@@ -151,23 +171,10 @@ class Server():
         ]
 
         parameters_aggregated = aggregate(weights_results)
-
-        # if self.args.cfg.use_before_fc_emb == 1:
-        #     for fit_res in results:
-        #         _client_dict = fit_res.metrics
-        #         _BeforeEmb_avg = _client_dict['BeforeEmb_avg']
-        #         self.BeforeEmb_avg = self.args.catemb.merge_mean_var(self.BeforeEmb_avg, _BeforeEmb_avg)
-
-        # if self.args.cfg.use_after_fc_emb == 1:
-        #     for fit_res in results:
-        #         _client_dict = fit_res.metrics
-        #         _AfterEmb_avg = _client_dict['AfterEmb_avg']
-        #         self.AfterEmb_avg = self.args.catemb.merge(self.AfterEmb_avg, _AfterEmb_avg)
-
         return parameters_aggregated
 
     def configure_fit(self, server_round, parameters):
-        config = {'server_round': server_round, 'BeforeEmb_avg': self.BeforeEmb_avg, 'AfterEmb_avg': self.AfterEmb_avg}
+        config = {'server_round': server_round}
 
         fit_ins = FitIns(parameters, config)
 
@@ -199,54 +206,22 @@ class Client():
 
 
         # ------ train multiple epochs ------
-        before_fc_emb = defaultdict(list, {})
-        after_fc_emb = defaultdict(list, {})
-        extra_loss_embedding, criterion_extra = None, None
-        # if config['server_round'] > self.args.cfg.use_after_fc_emb_round and self.args.cfg.use_after_fc_emb == 1:
-        #     extra_loss_embedding = self.args.catemb.generate_train_emb(config['AfterEmb_avg'])
-        #     extra_loss_embedding = extra_loss_embedding.to(self.args.device)
-        #     criterion_extra = SupConLoss(self.args, extra_loss_embedding)
-            
-        # p_images_group, p_labels_group = None, None
-        # print('in 0')
-        # print(f'{self.args.cfg.use_before_fc_emb=}')
-        # print(f'{self.args.cfg.use_before_fc_emb_round=}')
-        # print(f"{config['server_round']=}")
-        # if config['server_round'] > self.args.cfg.use_before_fc_emb_round and self.args.cfg.use_before_fc_emb == 1:
-        #     # print('in 1')
-        #     # p_images_group, p_labels_group = args.catemb.generate_pseudo_data(config['BeforeEmb_avg'], self.args.cfg.gene_num, self.args.cfg.batch_size, self.args.cfg.more_dense)
-        #     p_images_group, p_labels_group = config['p_images_group'], config['p_labels_group']
+        if self.args.cfg.strategy == 'FedProx':
+            global_model = copy.deepcopy(self.net)
+        else:
+            global_model = None
         
-
         for epoch in range(1, self.args.cfg.local_epoch + 1):
-            client_loss = train_baseline(self.args, self.train_loader, self.net, self.criterion, optimizer, epoch, self.cid, config)
-            logger1.info(
-                f"Train_Client{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Train_loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
+            client_loss = train_baseline(self.args, self.train_loader, self.net, self.criterion, optimizer, epoch, self.cid, config, global_model=global_model)
+            logger1.info(f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
             if self.args.cfg.wandb: wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
 
-        # ------ test accuracy after training ------
-        client_loss, accuracy = test_baseline(self.args, self.net, self.test_loader, self.criterion)
-        logger1.info(f'Val_Client[{self.cid}], Accu[{accuracy:.3f}], Loss[{client_loss:.3f}]')
-        if self.args.cfg.wandb: wandb.log({f"Val_Client{self.cid}|Accu:": accuracy})
+        return FitRes(get_parameters(self.net), len(self.train_loader), {})
 
-        # ------ save client model ------
-        # if self.args.cfg.save_client_model == 1:
-        #     torch.save(self.net, f"./save_client_model/client_{self.cid}.pth")
-        #     logger1.info(f'Finish saving client model {self.cid}')
-
-        # ------ Use Before&After Embedding ------
-        BeforeEmb_avg, AfterEmb_avg = 0, 0
-        # if self.args.cfg.use_before_fc_emb == 1:
-        #     BeforeEmb_avg = self.args.catemb.avg_mean_var(before_fc_emb)
-        # if self.args.cfg.use_after_fc_emb == 1:
-        #     AfterEmb_avg = self.args.catemb.avg(after_fc_emb)
-
-        return FitRes(get_parameters(self.net), len(self.train_loader),
-                      {'BeforeEmb_avg': BeforeEmb_avg, 'AfterEmb_avg': AfterEmb_avg})
-
-    def evaluate(self):
+    def evaluate(self, config):
         loss, _accuracy = test_baseline(self.args, self.net, self.test_loader, self.criterion)
-        logger1.info(f'Cid[{self.cid}], Accu[{float(_accuracy)}]')  # ljz
+        logger1.info(f"Round[{config['server_round']}]Val_Client[{self.cid}], Accu[{_accuracy:.3f}], Loss[{loss:.3f}]")
+        if self.args.cfg.wandb: wandb.log({f"Val_Client{self.cid}|Accu:": _accuracy})
         return float(loss), float(_accuracy)  # ljz
 
 
@@ -260,13 +235,17 @@ round_count = 0
 while round_count < args.cfg.round:
     round_count += 1
     logger1.info(f'*** Round [{round_count}] ***')
-    # ------ Init First Round ------
+    # ------ Config Round ------
     if round_count == 1:
         param = get_parameters(Baseline_from_generated(args))
         fit_ins = FitIns(param, {'server_round': 1})
+    else:
+        fit_ins.config['server_round'] = round_count
 
     # ------ Train Clients ------
     results = []
+    accu_list, loss_list = [], []
+
     for client_id in range(args.cfg.num_clients):
         client = client_fn(client_id, args)
 
@@ -275,7 +254,9 @@ while round_count < args.cfg.round:
         results.append(fit_res)
 
         # --- Evaluate One Client
-        # loss, accu = client.evaluate()
+        loss, accu = client.evaluate(fit_ins.config)
+        accu_list.append(accu)
+        loss_list.append(loss)
 
     # ------ Server aggregate ------
     fit_ins = server.server_conduct(round_count, results)
@@ -288,11 +269,6 @@ while round_count < args.cfg.round:
         loss, accu = test_baseline(args, aggregate_net, test_loader, criterion)
     logger1.info(f'*** Round[{round_count}]: Server_Test_Accu[{accu:.3f}] *** ')
     if args.cfg.wandb: wandb.log({f"Server Test Accu": accu, 'epoch': round_count})
-
-    # ------ Generate BeforeFcEmb ------
-    # if fit_ins.config['server_round'] >= args.cfg.use_before_fc_emb_round and args.cfg.use_before_fc_emb == 1:
-    #     p_images_group, p_labels_group = args.catemb.generate_pseudo_data(fit_ins.config['BeforeEmb_avg'], args.cfg.gene_num, args.cfg.batch_size, args.cfg.more_dense)
-    #     fit_ins.config['p_images_group'], fit_ins.config['p_labels_group'] = p_images_group, p_labels_group
 
 
 logger1.info(f"-------------------------------------------End All------------------------------------------------")

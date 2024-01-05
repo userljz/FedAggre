@@ -1,0 +1,28 @@
+logfile_info: '1227-FedProxValid2_cifar100_alpha0.1-mu0.01-LR0.001_Round400'
+wandb_project: '20231224'
+num_clients: 20
+wandb: 1
+
+dirichlet_alpha: 0.1
+local_epoch: 20
+round: 200
+
+# ============================================================================ #
+# Strategy
+
+strategy: 'FedProx'
+proximal_mu: 0.01
+#  {0.001, 0.01, 0.1, 0.5, 1}
+local_lr: 0.001
+
+
+
+
+# ============================================================================ #
+# Dataset
+
+# client_dataset: 'emnist'  
+
+# client_dataset: 'PathMNIST'
+
+client_dataset: 'cifar100'

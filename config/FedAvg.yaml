@@ -1,0 +1,20 @@
+logfile_info: '1226-FedAvg_PathMNIST_20Clients_alpha0.01'
+wandb_project: '20231227EMNIST'
+num_clients: 20
+wandb: 1
+
+# dirichlet_alpha: 0.01
+
+strategy: 'FedAvg'
+# local_lr: 0.01
+
+
+
+# ============================================================================ #
+# Dataset
+
+# client_dataset: 'emnist'  
+
+# client_dataset: 'PathMNIST'
+
+# client_dataset: 'cifar100'

@@ -128,21 +128,45 @@ def test(args, net, testloader, criterion):
 
 
 
-def train_baseline(args, train_loader, model, criterion, optimizer, epoch, cid, config):
+def train_baseline(args, train_loader, model, criterion, optimizer, epoch, cid, config, p_images_group=None, p_labels_group=None, global_model=None):
     """one epoch training"""
     losses = AverageMeter()
+    
+    
     for idx, (images, labels) in enumerate(train_loader):
         
         # ------ Calculate Feats ------
         images, labels = images.to(args.device), labels.to(args.device)
         features = model(images)  # [bz, 100]
-    
-        traditional_loss = criterion(features, labels)
-        traditional_loss_num = labels.shape[0]
+        
+        if args.cfg.strategy == 'FedProx' and config['server_round'] > 1:
+            proximal_term = 0.0
+            proximal_mu = args.cfg.proximal_mu
+            for local_weights, global_weights in zip(model.parameters(), global_model.parameters()):
+                proximal_term += torch.square((local_weights - global_weights).norm(2))
+            loss = criterion(features, labels) + (proximal_mu / 2) * proximal_term
+            bsz = labels.shape[0]
+        
+        else:
+            loss = criterion(features, labels)
+            bsz = labels.shape[0]
 
-        loss = traditional_loss 
+        
 
-        losses.update(loss.item(), traditional_loss_num)
+        # ------ Compute loss from Before Fc Emb ------
+        
+        if args.cfg.use_before_fc_emb == 1 and config['server_round'] > 1:  # make sure it's not the first round
+            if idx < len(p_labels_group):
+                p_images, p_labels = p_images_group[idx], p_labels_group[idx]
+                p_images, p_labels = p_images.to(args.device), p_labels.to(args.device)
+                p_features = model.get_img_feat(p_images)
+                p_loss = criterion(p_features, p_labels)
+                p_loss_num = p_labels.shape[0]
+                
+                loss = loss + p_loss
+                bsz = bsz + p_loss_num
+
+        losses.update(loss.item(), bsz)
 
         # SGD
         optimizer.zero_grad()

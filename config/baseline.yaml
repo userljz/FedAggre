@@ -1,16 +1,15 @@
-logfile_info: '1214-C100Baseline-FedAvg_vitb32'
-wandb_project: '20231209'
-dirichlet_alpha: 0.1
+logfile_info: '1226-FedAvg_PathMNIST_20Clients_alpha0.01'
+wandb_project: '20231224'
+num_clients: 20
+wandb: 1
 
-num_clients: 10
+dirichlet_alpha: 0.01
 
-model_name: 'ViT-B/32'
-mlp_hiddenlayer_num: 2048
-client_dataset: 'cifar100'
-num_class: 100
+# client_dataset: 'emnist'  
+# num_class: 47  
 
+client_dataset: 'PathMNIST'
+num_class: 9
 
-local_epoch: 50
-use_mlp: 1
-round: 80
-
+# client_dataset: 'cifar100'
+# num_class: 100

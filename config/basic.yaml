@@ -4,7 +4,7 @@ wandb: 1
 client_dataset: 'cifar10'
 num_class: 10
 
-num_clients: 10
+num_clients: 20
 batch_size: 64
 dirichlet_alpha: 0.1
 model_name: 'ViT-B/32'
@@ -39,5 +39,7 @@ only_test_training_labels: 0
 
 select_client_num: 0
 use_privacy_generator: 0
+
+strategy: 'FedAL'
 
 

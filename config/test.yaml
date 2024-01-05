@@ -1,5 +1,5 @@
-logfile_info: 'test'
-wandb_project: '20231207'
+logfile_info: 'test(01)'
+wandb_project: 'test'
 wandb: 0
 
 num_clients: 4
@@ -8,7 +8,6 @@ dirichlet_alpha: 0.1
 model_name: 'ViT-B/32'
 mlp_hiddenlayer_num: 2048
 client_dataset: 'PathMNIST'
-num_class: 9
 # RN50 RN101 RN50x4 ViT-B/32 ViT-B/16
 
 round: 3
@@ -23,19 +22,12 @@ local_weight_decay: 1e-4
 local_epoch: 1
 use_mlp: 0
 
-use_traditional_loss_lower_limit: 0
-use_traditional_loss_upper_limit: 0
 
-use_softmax: 0
 
 use_before_fc_emb: 1  # 1 or 0
 gene_num: 1000
 use_before_fc_emb_round: 1  # Minimum is 1
 
-
-use_after_fc_emb: 0
-use_after_fc_emb_round: 0
-extra_loss_weight: 0.5
 
 
 
