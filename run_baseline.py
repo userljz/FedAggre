@@ -11,9 +11,11 @@ from Utils.cfg_utils import read_yaml
 from Utils.data_utils import load_dataloader_from_generate, load_dataloader
 from Utils.log_utils import cus_logger
 from Utils.typing_utils import FitRes, FitIns
-from Utils.server_client_utils import SupConLoss, train_baseline, test_baseline, get_parameters, set_parameters, CategoryEmbedding
+from Utils.server_client_utils import SupConLoss, train_baseline, test_baseline, get_parameters, set_parameters, CategoryEmbedding, generate_from_meanvar
 from Utils.flwr_utils import aggregate
-
+import numpy as np
+import math
+import random
 
 
 
@@ -30,6 +32,12 @@ parser.add_argument('--strategy', type=str)
 parser.add_argument('--round', type=int)
 parser.add_argument('--gene_num', type=int)
 parser.add_argument('--select_client_num', type=int)
+parser.add_argument('--model_name', type=str)
+parser.add_argument('--theoretical_bound', type=int)
+parser.add_argument('--save_model_param', type=int)
+parser.add_argument('--save_client_param', type=int)
+parser.add_argument('--num_clients', type=int)
+parser.add_argument('--fewshot_percentage', type=float)
 
 
 args = parser.parse_args()
@@ -123,6 +131,27 @@ else:
     train_loaders, test_loader = load_dataloader_from_generate(args, args.cfg.client_dataset, dataloader_num=args.cfg.num_clients)
 
 
+
+# ------ Train Each Client's Pseudo Sample Generator ------
+used_dict = {}
+if args.cfg.use_before_fc_emb == 1:
+    if args.cfg.client_dataset == 'cifar100':
+        if args.cfg.model_name == 'ViT-B/32':
+            origin_img_info = torch.load('origin_img_info.pth')
+        elif args.cfg.model_name == 'RN50':
+            origin_img_info = torch.load('cifar100-RN50_origin_img_info.pth')
+        elif args.cfg.model_name == 'BLIP-base' or args.cfg.model_name == 'BLIP-base-noproj' or args.cfg.model_name == 'ALBEF-base-noproj' or args.cfg.model_name == 'ALBEF-base':
+            origin_img_info = torch.load(f'cifar100-{args.cfg.model_name}_origin_img_info.pth')
+    elif args.cfg.client_dataset == 'emnist':
+        origin_img_info = torch.load('emnist_origin_img_info.pth')
+    elif args.cfg.client_dataset == 'PathMNIST' or args.cfg.client_dataset == 'OrganAMNIST' or args.cfg.client_dataset == 'emnist62':
+        origin_img_info = torch.load(f'{args.cfg.client_dataset}_origin_img_info.pth')
+    else:
+        print('Please specify the dataset')
+
+
+    used_dict = origin_img_info
+
 def client_fn(cid, _args):
     if _args.cfg.use_timm == 1:
         _model = Baseline_from_timm(_args)
@@ -160,11 +189,16 @@ def count_labels(data_loader):
 
 
 class Server():
-    def __init__(self, args):
+    def __init__(self, args, class_mean_var=None):
         self.args = args
+        self.class_mean_var = class_mean_var
         
 
     def aggregate_fit(self, server_round, results):
+        if results == None:
+            print("In the first round, None results")
+            return None
+
         weights_results = [
             (fit_res.parameters, fit_res.num_examples)
             for fit_res in results
@@ -174,7 +208,7 @@ class Server():
         return parameters_aggregated
 
     def configure_fit(self, server_round, parameters):
-        config = {'server_round': server_round}
+        config = {'server_round': server_round, 'BeforeEmb_avg': self.class_mean_var}
 
         fit_ins = FitIns(parameters, config)
 
@@ -204,6 +238,15 @@ class Client():
                                     momentum=float(self.args.cfg.local_momentum),
                                     weight_decay=float(self.args.cfg.local_weight_decay))
 
+        # ------ Use Pseudo Emb ------
+        p_images_group, p_labels_group = None, None
+        if self.args.cfg.use_before_fc_emb == 1 and config['server_round'] > -1:
+            CatEmbDict_avg = config['BeforeEmb_avg']
+            gene_num = self.args.cfg.gene_num
+            batch_size = self.args.cfg.batch_size
+            p_images_group, p_labels_group = generate_from_meanvar(CatEmbDict_avg, gene_num, batch_size)
+            logger1.info(f'Totally {len(p_images_group) * batch_size} Pseudo labels')
+
 
         # ------ train multiple epochs ------
         if self.args.cfg.strategy == 'FedProx':
@@ -212,9 +255,23 @@ class Client():
             global_model = None
         
         for epoch in range(1, self.args.cfg.local_epoch + 1):
-            client_loss = train_baseline(self.args, self.train_loader, self.net, self.criterion, optimizer, epoch, self.cid, config, global_model=global_model)
-            logger1.info(f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
-            if self.args.cfg.wandb: wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
+            if args.cfg.theoretical_bound == 1:
+                client_loss, batch_grads = train_baseline(self.args, self.train_loader, self.net, self.criterion, optimizer, epoch, self.cid, config, p_images_group, p_labels_group, global_model=global_model)
+                batch_grad_mean = torch.mean(batch_grads, dim=0)  # torch.Size([2099712])
+                batch_grad_var = torch.var(batch_grads, dim=0)
+                mean_norm = torch.norm(batch_grad_mean, p=2).item()
+                var_norm = torch.norm(batch_grad_var, p=2).item()
+                cv = math.sqrt(var_norm) / mean_norm
+                logger1.info(f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}, mean/var:{mean_norm}/{var_norm}")
+                if self.args.cfg.wandb: 
+                    wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
+                    wandb.log({f"Train_Client{self.cid}|Gradient_mean:": mean_norm})
+                    wandb.log({f"Train_Client{self.cid}|Gradient_var:": var_norm})
+                    wandb.log({f"Train_Client{self.cid}|CV:": cv})
+            else:
+                client_loss = train_baseline(self.args, self.train_loader, self.net, self.criterion, optimizer, epoch, self.cid, config, p_images_group, p_labels_group, global_model=global_model)
+                logger1.info(f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
+                if self.args.cfg.wandb: wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
 
         return FitRes(get_parameters(self.net), len(self.train_loader), {})
 
@@ -226,32 +283,59 @@ class Client():
 
 
 # -------- Start FL ------
-server = Server(args)
+server = Server(args, used_dict)
 label_counts = count_labels(train_loaders)
 for key, value in label_counts.items():
     logger1.info(f"[{key}]: {value}")
 
 round_count = 0
+model_param = []
+client_param = defaultdict(list)
 while round_count < args.cfg.round:
     round_count += 1
     logger1.info(f'*** Round [{round_count}] ***')
     # ------ Config Round ------
     if round_count == 1:
         param = get_parameters(Baseline_from_generated(args))
-        fit_ins = FitIns(param, {'server_round': 1})
+        fit_ins = server.server_conduct(round_count, None)
+        fit_ins.parameters = param
     else:
         fit_ins.config['server_round'] = round_count
+
+    if args.cfg.save_model_param:
+        _parameters_aggregated = fit_ins.parameters
+        flattened_array = np.concatenate([p.ravel() for p in _parameters_aggregated])
+        flattened_tensor = torch.from_numpy(flattened_array).clone()
+        model_param.append(flattened_tensor)
+        print(f"{len(model_param) = }")
 
     # ------ Train Clients ------
     results = []
     accu_list, loss_list = [], []
 
-    for client_id in range(args.cfg.num_clients):
+    client_list = list(range(args.cfg.num_clients))
+    if args.cfg.select_client_num == 0:
+        client_list_use = client_list
+    else:
+        selected_client_numbers = random.sample(client_list, args.cfg.select_client_num)
+        selected_client_numbers.sort()
+        client_list_use = selected_client_numbers
+    
+    logger1.info(f'Round [{round_count}] select clients number is {client_list_use}')
+
+    for client_id in client_list_use:
         client = client_fn(client_id, args)
 
         # --- Fit One Client ---
         fit_res = client.fit(fit_ins.parameters, fit_ins.config)
         results.append(fit_res)
+
+        # --- Save One Client's Param ---
+        if args.cfg.save_client_param:
+            _client_parameters = fit_res.parameters
+            client_flattened_array = np.concatenate([p.ravel() for p in _client_parameters])
+            client_flattened_tensor = torch.from_numpy(client_flattened_array).clone()
+            client_param[client_id].append(client_flattened_tensor)
 
         # --- Evaluate One Client
         loss, accu = client.evaluate(fit_ins.config)
@@ -270,5 +354,10 @@ while round_count < args.cfg.round:
     logger1.info(f'*** Round[{round_count}]: Server_Test_Accu[{accu:.3f}] *** ')
     if args.cfg.wandb: wandb.log({f"Server Test Accu": accu, 'epoch': round_count})
 
+if args.cfg.save_model_param:
+    torch.save(model_param, f'{args.cfg.strategy}_loss_landscope_alpha{args.cfg.dirichlet_alpha}.pth')
+
+if args.cfg.save_client_param:
+    torch.save(client_param, f'{args.cfg.strategy}_ClientParam_loss_landscope_alpha{args.cfg.dirichlet_alpha}_{args.cfg.num_clients}clients.pth')
 
 logger1.info(f"-------------------------------------------End All------------------------------------------------")

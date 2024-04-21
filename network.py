@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 import sys
-sys.path.insert(0, '../CLIP')
+sys.path.insert(0, '/home/ljz/CLIP')
 import clip
 
 import timm
@@ -59,27 +59,50 @@ class ClipModel_from_generated(nn.Module):
         
         if args.cfg.model_name == 'RN50':
             img_emb_length = 1024
+            fc_input_dim = img_emb_length
+            fc_output_dim = img_emb_length
         elif args.cfg.model_name == 'ViT-B/32':
             img_emb_length = 512
+            fc_input_dim = img_emb_length
+            fc_output_dim = img_emb_length
+        elif args.cfg.model_name == 'ViT-B32-timm':
+            img_emb_length = 1000
+            fc_input_dim = img_emb_length
+            fc_output_dim = 512
+            
+        elif args.cfg.model_name == 'BLIP-base' or args.cfg.model_name == 'ALBEF-base':
+            img_emb_length = 256
+            fc_input_dim = img_emb_length
+            fc_output_dim = img_emb_length
+        elif args.cfg.model_name == 'BLIP-base-noproj' or args.cfg.model_name == 'ALBEF-base-noproj':
+            img_emb_length = 768
+            fc_input_dim = img_emb_length
+            fc_output_dim = img_emb_length
         else:
             print('Please specify the img_emb_length')
+
+        if args.cfg.gpt3_anchor == "description_dim3072":
+                fc_output_dim = 3072
         
         mlp_hiddenlayer_num = args.cfg.mlp_hiddenlayer_num
         
         if args.cfg.use_mlp == 1:
             self.model = nn.Sequential(
-                nn.Linear(img_emb_length, mlp_hiddenlayer_num),
+                nn.Linear(fc_input_dim, mlp_hiddenlayer_num),
                 nn.ReLU(),
-                nn.Linear(mlp_hiddenlayer_num, img_emb_length)
+                nn.Linear(mlp_hiddenlayer_num, fc_output_dim)
             ).to(args.device)
         else:
-            self.model = nn.Linear(img_emb_length, img_emb_length).to(args.device)
+            self.model = nn.Linear(fc_input_dim, fc_output_dim).to(args.device)
         self.args = args
 
     def get_img_feat(self, img_emb):
         """
         given_feat: Use the average of the features of other clients as a negative sample
         """
+        image_features = self.model(img_emb)
+        return image_features
+    def forward(self, img_emb):
         image_features = self.model(img_emb)
         return image_features
 
@@ -91,6 +114,8 @@ class Baseline_from_generated(nn.Module):
             img_emb_length = 1024
         elif args.cfg.model_name == 'ViT-B/32':
             img_emb_length = 512
+        elif args.cfg.model_name == 'ViT-B32-timm':
+            img_emb_length = 1000
         else:
             print('Please specify the img_emb_length')
 

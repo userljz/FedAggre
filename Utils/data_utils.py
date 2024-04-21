@@ -14,6 +14,7 @@ import logging
 from logging import debug, info
 from addict import Dict
 import random
+import math 
 
 
 # logging.basicConfig(format='%(levelname)s | %(funcName)s | %(lineno)d: %(message)s', level=logging.INFO)
@@ -101,15 +102,15 @@ def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
     Example:
 
     '''
-# ============================================================================ #
-# Select Dataset
+    # ============================================================================ #
+    # Select Dataset
     if dataset_name == 'cifar10':
         ds = cifar10_dict
     elif dataset_name == 'cifar100':
         ds = cifar100_dict
 
-# ============================================================================ #
-# Centralized DataLoader
+    # ============================================================================ #
+    # Centralized DataLoader
     if is_iid == 1 and dataloader_num == 1:
         train_loader = torch.utils.data.DataLoader(
             ds.dataset(root=dataroot, transform=ds.train_transform, train=True, download=True),
@@ -120,8 +121,8 @@ def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
 
         return train_loader, test_loader
 
-# ============================================================================ #
-# FL 
+    # ============================================================================ #
+    # FL 
     elif dataloader_num > 1:
         trainset = ds.dataset(root=dataroot, transform=ds.train_transform, train=True, download=True)
         testset = ds.dataset(root=dataroot, transform=ds.test_transform, train=False, download=True)
@@ -166,6 +167,17 @@ def load_dataloader(args, dataset_name, dataroot, is_iid=1, dataloader_num=1):
         # trainloaders = [DataLoader(d, batch_size=args.cfg.batch_size, shuffle=True) for d in client_trainsets]
         # testloaders = [DataLoader(d, batch_size=args.cfg.batch_size, shuffle=True) for d in client_testsets]
         return train_loaders, testloader
+
+
+def get_fewshot_samples(lst, percentage):
+    """
+    lst: list of (img, label) pairs
+    percentage: few-shot sample number percentage, 0.5 means use 50% of total samples
+    """
+    random.shuffle(lst)
+    num_elements = math.ceil(len(lst) * percentage)
+    
+    return lst[:num_elements]
 
 
 # 20240103 Currently Use
@@ -213,9 +225,8 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
 
 
     elif dataset_name == 'cifar100':
-        test_data_per_class = 100
-# ============================================================================ #
-# CLIP RN50 Embedding
+        # ============================================================================ #
+        # CLIP RN50 Embedding
         if args.cfg.model_name == 'RN50':
             train_img = torch.load('/home/ljz/dataset/cifar100_generated/cifar100Train_RN50_imgembV1.pth')
             train_label = torch.load('/home/ljz/dataset/cifar100_generated/cifar100Train_labelsV1.pth')
@@ -227,8 +238,8 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
             test_img = test_img.float()
             test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
 
-# ============================================================================ #
-# CLIP ViT-B/32 Embedding
+        # ============================================================================ #
+        # CLIP ViT-B/32 Embedding
         elif args.cfg.model_name == 'ViT-B/32':
             train_img = torch.load('/home/ljz/dataset/cifar100_generated_vitb32/cifar100_vitb32Train_imgemb.pth')
             train_label = torch.load('/home/ljz/dataset/cifar100_generated_vitb32/cifar100_vitb32Train_labels.pth')
@@ -239,9 +250,42 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
             test_label = torch.load('/home/ljz/dataset/cifar100_generated_vitb32/cifar100_vitb32Test_labels.pth')
             test_img = test_img.float()
             test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
+        
+        elif args.cfg.model_name == 'ViT-B32-timm':
+            train_img = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_{args.cfg.model_name}Train_imgemb.pth')
+            train_label = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_{args.cfg.model_name}Train_labels.pth')
+            train_img = train_img.float()
+            train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
 
-# ============================================================================ #
-# Timm Pre-trained RN50 Embedding
+            test_img = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_{args.cfg.model_name}Test_imgemb.pth')
+            test_label = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_{args.cfg.model_name}Test_labels.pth')
+            test_img = test_img.float()
+            test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
+        
+        elif args.cfg.model_name == 'BLIP-base' or args.cfg.model_name == 'BLIP-base-noproj':
+            train_img = torch.load(f'/home/ljz/dataset/cifar100_generated_BLIP/cifar100_{args.cfg.model_name}_Train_imgemb.pth')
+            train_label = torch.load(f'/home/ljz/dataset/cifar100_generated_BLIP/cifar100_{args.cfg.model_name}_Train_labels.pth')
+            train_img = train_img.float()
+            train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
+
+            test_img = torch.load(f'/home/ljz/dataset/cifar100_generated_BLIP/cifar100_{args.cfg.model_name}_Test_imgemb.pth')
+            test_label = torch.load(f'/home/ljz/dataset/cifar100_generated_BLIP/cifar100_{args.cfg.model_name}_Test_labels.pth')
+            test_img = test_img.float()
+            test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
+        
+        elif args.cfg.model_name == 'ALBEF-base-noproj' or args.cfg.model_name == 'ALBEF-base':
+            train_img = torch.load(f'/home/ljz/dataset/cifar100_generated_ALBEF/cifar100_{args.cfg.model_name}_Train_imgemb.pth')
+            train_label = torch.load(f'/home/ljz/dataset/cifar100_generated_ALBEF/cifar100_{args.cfg.model_name}_Train_labels.pth')
+            train_img = train_img.float()
+            train_img_label_list = [(train_img[i], train_label[i]) for i in range(len(train_label))]
+
+            test_img = torch.load(f'/home/ljz/dataset/cifar100_generated_ALBEF/cifar100_{args.cfg.model_name}_Test_imgemb.pth')
+            test_label = torch.load(f'/home/ljz/dataset/cifar100_generated_ALBEF/cifar100_{args.cfg.model_name}_Test_labels.pth')
+            test_img = test_img.float()
+            test_img_label_list = [(test_img[i], test_label[i]) for i in range(len(test_label))]
+        
+        # ============================================================================ #
+        # Timm Pre-trained RN50 Embedding
         # train_img = torch.load('/home/ljz/dataset/cifar100_gene_TimmRN50/TrainImg_PretrainedRN50_CIFAR100.pth')
         # train_label = torch.load('/home/ljz/dataset/cifar100_gene_TimmRN50/TrainLabel_PretrainedRN50_CIFAR100.pth')
         # train_img = train_img.float()
@@ -254,7 +298,11 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
     else:
         print('Please specify the dataset')
 
-    
+    # ===== Rebuttal period: add few-shot Scenario =====
+    print(f"before fewshot_samples {len(train_img_label_list)}")
+    train_img_label_list = get_fewshot_samples(train_img_label_list, args.cfg.fewshot_percentage)
+    print(f"after fewshot_samples {len(train_img_label_list)}")
+
     if dataloader_num == 1:
         train_loader = torch.utils.data.DataLoader(
             train_img_label_list,
@@ -271,7 +319,8 @@ def load_dataloader_from_generate(args, dataset_name, dataloader_num=1):
             batch_size=args.cfg.batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
         # return non-iid multi-clients trainloaders
-        labels = np.array(train_label)
+        labels = np.array([i[1] for i in train_img_label_list])
+        # labels = np.array(train_label)
         client_idcs = dirichlet_split_noniid(args, labels, args.cfg.dirichlet_alpha, dataloader_num)
         client_trainsets = []
         for client_i in client_idcs:

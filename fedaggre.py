@@ -14,6 +14,7 @@ from Utils.log_utils import cus_logger
 from Utils.typing_utils import FitRes, FitIns
 from Utils.server_client_utils import SupConLoss, train, test, get_parameters, set_parameters, CategoryEmbedding, generate_from_meanvar
 from Utils.flwr_utils import aggregate
+import math
 
 
 
@@ -29,7 +30,19 @@ parser.add_argument('--wandb_project', type=str)
 parser.add_argument('--strategy', type=str)
 parser.add_argument('--round', type=int)
 parser.add_argument('--gene_num', type=int)
+parser.add_argument('--num_clients', type=int)
 parser.add_argument('--select_client_num', type=int)
+parser.add_argument('--model_name', type=str)
+parser.add_argument('--meaningful_anchor', type=int)
+parser.add_argument('--theoretical_bound', type=int)
+parser.add_argument('--save_model_param', type=int)
+parser.add_argument('--save_client_param', type=int)
+parser.add_argument('--local_epoch', type=int)
+parser.add_argument('--fewshot_percentage', type=float)
+parser.add_argument('--private_estimate', type=int)
+
+
+
 args = parser.parse_args()
 args_command = vars(args)
 
@@ -106,10 +119,36 @@ print_dict(args)
 # ============================================================================ #
 # Use Category N text Emb
 if args.cfg.client_dataset == 'cifar100':
-    if args.cfg.model_name == 'RN50':
-        text_emb = torch.load(f'/home/ljz/dataset/cifar100_classn_text/cifar100_classn_RN50_textemb.pth')
-    elif args.cfg.model_name == 'ViT-B/32':
-        text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_classn_vitb32_textemb.pth')
+    if args.cfg.meaningful_anchor == 1:
+        # dim = 512
+        if args.cfg.model_name == 'ViT-B/32' or args.cfg.model_name == 'ViT-B32-timm':
+            text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_vitb32_textemb.pth')
+    
+    elif args.cfg.gpt3_anchor == "one_prompt":
+        if args.cfg.model_name == 'ViT-B/32' or args.cfg.model_name == 'ViT-B32-timm':
+            text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_vitb32_textemb_gpt3.pth')
+    
+    elif args.cfg.gpt3_anchor == "ensembel_prompt":
+        if args.cfg.model_name == 'ViT-B/32' or args.cfg.model_name == 'ViT-B32-timm':
+            text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_vitb32_textemb_gpt3Ensemble.pth')
+
+    elif args.cfg.gpt3_anchor == "description":
+        if args.cfg.model_name == 'ViT-B/32' or args.cfg.model_name == 'ViT-B32-timm':
+            text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_vitb32_textemb_gpt3Descrip.pth')
+
+    elif args.cfg.gpt3_anchor == "description_dim3072":
+        text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_vitb32_textemb_gpt3Descrip_Dim3072.pth')
+
+    
+    else:
+        if args.cfg.model_name == 'RN50':
+            text_emb = torch.load(f'/home/ljz/dataset/cifar100_classn_text/cifar100_classn_RN50_textemb.pth')
+        elif args.cfg.model_name == 'ViT-B/32' or args.cfg.model_name == 'ViT-B32-timm':
+            text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_vitb32/cifar100_classn_vitb32_textemb.pth')
+        elif args.cfg.model_name == 'BLIP-base' or args.cfg.model_name == 'BLIP-base-noproj':
+            text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_BLIP/cifar100_classn_{args.cfg.model_name}_textemb.pth')
+        elif args.cfg.model_name == 'ALBEF-base-noproj' or args.cfg.model_name == 'ALBEF-base':
+            text_emb = torch.load(f'/home/ljz/dataset/cifar100_generated_ALBEF/cifar100_classn_{args.cfg.model_name}_textemb.pth')
 elif args.cfg.client_dataset == 'emnist' or args.cfg.client_dataset == 'emnist62':
     if args.cfg.model_name == 'ViT-B/32':
         text_emb = torch.load(f'/home/ljz/dataset/{args.cfg.client_dataset}_generated_vitb32/{args.cfg.client_dataset}_classn_vitb32_textemb.pth')
@@ -126,102 +165,36 @@ if args.cfg.reverse_textemb == 1:
 
 args.text_emb = text_emb.float().to(args.cfg.device)
 
+
 # ------ Initialize DataLoader & Server ------
 train_loaders, test_loader = load_dataloader_from_generate(args, args.cfg.client_dataset, dataloader_num=args.cfg.num_clients)
 
 # ------ Train Each Client's Pseudo Sample Generator ------
-# gene_img_info_summary = {}
 used_dict = {}
 if args.cfg.use_before_fc_emb == 1:
     if args.cfg.client_dataset == 'cifar100':
-        gene_img_info_summary = torch.load('gene_img_info_summary.pth')
-        origin_img_info = torch.load('origin_img_info.pth')
+        if args.cfg.model_name == 'ViT-B/32':
+            if args.cfg.private_estimate == 1:
+                origin_img_info = torch.load('./ImgEmbStatistics/cifar100_private_img_info.pth')
+            else:
+                origin_img_info = torch.load('./ImgEmbStatistics/origin_img_info.pth')
+        elif args.cfg.model_name == 'ViT-B32-timm':
+            origin_img_info = torch.load('./ImgEmbStatistics/cifar100-ViT-B32-timm_origin_img_info.pth')
+        elif args.cfg.model_name == 'RN50':
+            origin_img_info = torch.load('./ImgEmbStatistics/cifar100-RN50_origin_img_info.pth')
+        elif args.cfg.model_name == 'BLIP-base' or args.cfg.model_name == 'BLIP-base-noproj' or args.cfg.model_name == 'ALBEF-base-noproj' or args.cfg.model_name == 'ALBEF-base':
+            origin_img_info = torch.load(f'./ImgEmbStatistics/cifar100-{args.cfg.model_name}_origin_img_info.pth')
     elif args.cfg.client_dataset == 'emnist':
-        origin_img_info = torch.load('emnist_origin_img_info.pth')
+        origin_img_info = torch.load('./ImgEmbStatistics/emnist_origin_img_info.pth')
     elif args.cfg.client_dataset == 'PathMNIST' or args.cfg.client_dataset == 'OrganAMNIST' or args.cfg.client_dataset == 'emnist62':
-        origin_img_info = torch.load(f'{args.cfg.client_dataset}_origin_img_info.pth')
+        origin_img_info = torch.load(f'./ImgEmbStatistics/{args.cfg.client_dataset}_origin_img_info.pth')
     else:
         print('Please specify the dataset')
-    # for k,v in gene_img_info_summary.items():
-    #     _mean = origin_img_info[k][0]
-    #     _var = origin_img_info[k][1]
-    #     used_dict[k] = [_mean, v[1], v[2]]
+
 
     used_dict = origin_img_info
 
-    # ------ Load Model ------
-    # ae_model = EmbAE(512, 64).to('cuda')
-    # ae_model.load_state_dict(torch.load("/home/ljz/vae/ae_3000TrainData_01noise_state_dict.pth", map_location=torch.device('cuda')))
-
-    # for index, train_loader_i in enumerate(train_loaders):
-    #     img_dict = defaultdict(list, {})
-    #     for image, label in train_loader_i:
-    #         for i in range(len(label)):
-    #             image_i = image[i]
-    #             label_i = label[i]
-    #             img_dict[label_i.detach().cpu().item()].append(image_i.detach())
-        
-    #     # origin_img_info = {}
-    #     # for k,v in img_dict.items():
-    #     #     _v = torch.stack(v).to('cuda')
-    #     #     o_m = _v.mean(dim=0)
-    #     #     o_var = _v.var(dim=0, unbiased=False)
-    #     #     origin_img_info[k] = [o_m, o_var, _v.size(0)]
-        
-    #     gene_img_dict = {}
-    #     # for key, value in img_dict.items():
-    #     #     _img = torch.stack(value).to('cuda')
-            
-    #     #     if args.cfg.use_privacy_generator == 1:
-    #     #         _gene_img = ae_model.generate(_img)
-    #     #     else:
-    #     #         _gene_img = _img
-
-    #     #     gene_img_dict[key] = _gene_img.detach()
-    #     # torch.save(gene_img_dict, 'gene_img_dict.pth')
-
-    #     # for key, value in img_dict.items():
-    #     #     _img = torch.stack(value).to('cuda')
-            
-    #     #     if args.cfg.use_privacy_generator == 1:
-    #     #         _gene_img = ae_model.generate(_img)
-    #     #     else:
-    #     #         _gene_img = _img
-
-    #     #     gene_img_dict[key] = _gene_img.detach()
-
-    #     gene_img_dict = torch.load('gene_img_dict.pth')
-
-    #     gene_img_info = {}
-    #     for key, value in gene_img_dict.items():
-    #         _mean = value.mean(dim=0)
-
-    #         _var = value.var(dim=0, unbiased=False)
-    #         # _var = origin_img_info[key][1]
-
-    #         gene_img_info[key] = [_mean, _var, value.size(0)]
-
-    #     for k,v in gene_img_info.items():
-    #         if k in gene_img_info_summary.keys():
-    #             mean1 = v[0].detach()
-    #             var1 = v[1].detach()
-    #             n1 = v[2]
-
-    #             mean2 = gene_img_info_summary[k][0].detach()
-    #             var2 = gene_img_info_summary[k][1].detach()
-    #             n2 = gene_img_info_summary[k][2]
-
-    #             combined_mean = (n1 * mean1 + n2 * mean2) / (n1 + n2)
-    #             combined_var = ((n1 * var1 + n2 * var2) + ((n1 * n2) / (n1 + n2)) * (mean1 - mean2) ** 2) / (n1 + n2)
-                
-    #             gene_img_info_summary[k] = [combined_mean, combined_var, (n1+n2)]
-    #         else:
-
-    #             gene_img_info_summary[k] = [v[0].detach(), v[1].detach(), v[2]]
-
-    # print(gene_img_info_summary)
-
-
+    
 
 
 def client_fn(cid, _args):
@@ -265,6 +238,10 @@ class Server():
         self.class_mean_var = class_mean_var
 
     def aggregate_fit(self, server_round, results):
+        if results == None:
+            print("In the first round, None results")
+            return None
+        
         weights_results = [
             (fit_res.parameters, fit_res.num_examples)
             for fit_res in results
@@ -302,7 +279,7 @@ class Client():
 
         # ------ Use Pseudo Emb ------
         p_images_group, p_labels_group = None, None
-        if self.args.cfg.use_before_fc_emb == 1 and config['server_round'] > 1:
+        if self.args.cfg.use_before_fc_emb == 1 and config['server_round'] > -1:
             CatEmbDict_avg = config['BeforeEmb_avg']
             gene_num = self.args.cfg.gene_num
             batch_size = self.args.cfg.batch_size
@@ -311,10 +288,26 @@ class Client():
         
         # ------ train multiple epochs ------
         for epoch in range(1, self.args.cfg.local_epoch + 1):
-            client_loss = train(self.args, self.train_loader, self.net, self.criterion,
-                                optimizer, epoch, self.cid, config, p_images_group, p_labels_group)
-            logger1.info(f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
-            if self.args.cfg.wandb: wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
+            if args.cfg.theoretical_bound == 1:
+                client_loss, batch_grads = train(self.args, self.train_loader, self.net, self.criterion,
+                                    optimizer, epoch, self.cid, config, p_images_group, p_labels_group)
+                batch_grad_mean = torch.mean(batch_grads, dim=0)  # torch.Size([2099712])
+                batch_grad_var = torch.var(batch_grads, dim=0)
+                mean_norm = torch.norm(batch_grad_mean, p=2).item()
+                var_norm = torch.norm(batch_grad_var, p=2).item()
+                cv = math.sqrt(var_norm) / mean_norm
+                logger1.info(f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}, mean/var:{mean_norm}/{var_norm}")
+                if self.args.cfg.wandb: 
+                    wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
+                    wandb.log({f"Train_Client{self.cid}|Gradient_mean:": mean_norm})
+                    wandb.log({f"Train_Client{self.cid}|Gradient_var:": var_norm})
+                    wandb.log({f"Train_Client{self.cid}|CV:": cv})
+
+            else:
+                client_loss = train(self.args, self.train_loader, self.net, self.criterion,
+                                    optimizer, epoch, self.cid, config, p_images_group, p_labels_group)
+                logger1.info(f"Round[{config['server_round']}]TrainClient{self.cid}:[{epoch}/{self.args.cfg.local_epoch}], Loss:{client_loss:.3f}, DataLength:{len(self.train_loader.dataset)}")
+                if self.args.cfg.wandb: wandb.log({f"Train_Client{self.cid}|Train_loss:": client_loss})
 
         return FitRes(get_parameters(self.net), len(self.train_loader), {})
 
@@ -332,13 +325,17 @@ for key, value in label_counts.items():
     logger1.info(f"[{key}]: {value}")
 
 round_count = 0
+model_param = []
+client_param = defaultdict(list)
 while round_count < args.cfg.round:
     round_count += 1
     logger1.info(f'*** Round [{round_count}] ***')
     # ------ Config Round ------
     if round_count == 1:
         param = get_parameters(ClipModel_from_generated(args))
-        fit_ins = FitIns(param, {'server_round': 1})
+        # fit_ins = FitIns(param, {'server_round': 1})
+        fit_ins = server.server_conduct(round_count, None)
+        fit_ins.parameters = param
     else:
         fit_ins.config['server_round'] = round_count
 
@@ -357,6 +354,12 @@ while round_count < args.cfg.round:
     
     logger1.info(f'Round [{round_count}] select clients number is {client_list_use}')
 
+    if args.cfg.save_model_param:
+        _parameters_aggregated = fit_ins.parameters
+        flattened_array = np.concatenate([p.ravel() for p in _parameters_aggregated])
+        flattened_tensor = torch.from_numpy(flattened_array).clone()
+        model_param.append(flattened_tensor)
+        logger1.info(f"{len(model_param) = }")
 
     for client_id in client_list_use:
         client = client_fn(client_id, args)
@@ -364,6 +367,14 @@ while round_count < args.cfg.round:
         # --- Fit One Client ---
         fit_res = client.fit(fit_ins.parameters, fit_ins.config)
         results.append(fit_res)
+
+        # --- Save One Client's Param ---
+        if args.cfg.save_client_param:
+            _client_parameters = fit_res.parameters
+            client_flattened_array = np.concatenate([p.ravel() for p in _client_parameters])
+            client_flattened_tensor = torch.from_numpy(client_flattened_array).clone()
+            client_param[client_id].append(client_flattened_tensor)
+
 
         # --- Evaluate One Client
         loss, accu = client.evaluate(fit_ins.config)
@@ -385,5 +396,11 @@ while round_count < args.cfg.round:
     
     logger1.info(f'*** Round[{round_count}]: Server_Test_Accu[{accu:.3f}] *** ')
     if args.cfg.wandb: wandb.log({f"Server Test Accu": accu, 'epoch': round_count})
+
+if args.cfg.save_model_param:
+    torch.save(model_param, f'{args.cfg.strategy}_loss_landscope_alpha{args.cfg.dirichlet_alpha}_{args.cfg.num_clients}clients.pth')
+if args.cfg.save_client_param:
+    torch.save(client_param, f'{args.cfg.strategy}_ClientParam_loss_landscope_alpha{args.cfg.dirichlet_alpha}_{args.cfg.num_clients}clients.pth')
+
 
 logger1.info(f"-------------------------------------------End All------------------------------------------------")

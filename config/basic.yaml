@@ -2,20 +2,20 @@ logfile_info: '20231104(01)'
 wandb_project: '20231207'
 wandb: 1
 client_dataset: 'cifar10'
-num_class: 10
+num_class: 0
 
 num_clients: 20
 batch_size: 64
 dirichlet_alpha: 0.1
 model_name: 'ViT-B/32'
-# RN50 RN101 RN50x4 ViT-B/32 ViT-B/16
+# RN50 RN101 RN50x4 ViT-B/32 ViT-B/16 BLIP-base ALBEF-base
 
 round: 40
 
 device: 'cuda'
 
 dataset_path: "../dataset"
-save_client_model: 0
+
 
 margin: 0.2
 local_lr: 0.005
@@ -40,6 +40,16 @@ only_test_training_labels: 0
 select_client_num: 0
 use_privacy_generator: 0
 
-strategy: 'FedAL'
+strategy: 'CANAL'
+meaningful_anchor: 0
+
+theoretical_bound: 0
+save_model_param: 0
+save_client_param: 0
+
+fewshot_percentage: 1
+private_estimate: 0
+
+gpt3_anchor: 'no' # ensembel_prompt, one_prompt, no, description
 
 

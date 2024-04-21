@@ -4,3 +4,7 @@
 /utils/__pycache__
 *.png
 *.pyc
+
+/0129vis_feat
+/0122_visualization
+/landscope

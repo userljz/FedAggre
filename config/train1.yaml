@@ -6,7 +6,7 @@ wandb: 1
 dirichlet_alpha: 0.1
 local_lr: 0.001
 
-client_dataset: 'emnist'  
+# client_dataset: 'emnist'  
 
 # client_dataset: 'PathMNIST'
 

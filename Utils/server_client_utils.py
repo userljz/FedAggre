@@ -18,7 +18,7 @@ from collections import defaultdict
 
 class SupConLoss(nn.Module):
     """Supervised Contrastive Learning:.
-It also supports the unsupervised contrastive loss in SimCLR"""
+    It also supports the unsupervised contrastive loss in SimCLR"""
 
     def __init__(self, args, text_emb):
         super(SupConLoss, self).__init__()
@@ -65,9 +65,14 @@ def set_parameters(net, parameters: List[np.ndarray]):
     net.load_state_dict(state_dict, strict=True)
     return net
 
+
+
 def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, p_images_group=None, p_labels_group=None):
     """one epoch training"""
     losses = AverageMeter()
+    if args.cfg.theoretical_bound == 1:
+        batch_grads = []
+
     for idx, (images, labels) in enumerate(train_loader):
         # ------ Calculate Feats ------
         images, labels = images.to(args.device), labels.to(args.device)
@@ -81,7 +86,7 @@ def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, p
 
         # ------ Compute loss from Before Fc Emb ------
         
-        if args.cfg.use_before_fc_emb == 1 and config['server_round'] > 1:  # make sure it's not the first round
+        if args.cfg.use_before_fc_emb == 1 and config['server_round'] > -1:  # make sure it's not the first round
             
             if idx < len(p_labels_group):
                 p_images, p_labels = p_images_group[idx], p_labels_group[idx]
@@ -99,7 +104,26 @@ def train(args, train_loader, model, criterion, optimizer, epoch, cid, config, p
         # SGD
         optimizer.zero_grad()
         loss.backward()
+
+        if args.cfg.theoretical_bound == 1:
+            # print(f'{loss=}')
+            # print(f'{bsz=}')
+            # print(f'{loss/bsz=}')
+            # print(f'{losses.avg=}')
+            grads = []
+            for param in model.parameters():
+                if param.grad is not None:
+                    grads.append(param.grad.view(-1)/bsz)  # 展平梯度并存储
+                    # print(f'{param.grad.view(-1).size()=}')
+            batch_grads.append(torch.cat(grads))  # 将所有参数的梯度连接起来
+
         optimizer.step()
+
+    
+    
+    if args.cfg.theoretical_bound == 1:
+        batch_grads = torch.stack(batch_grads)
+        return losses.avg, batch_grads
 
     return losses.avg
 
@@ -131,7 +155,8 @@ def test(args, net, testloader, criterion):
 def train_baseline(args, train_loader, model, criterion, optimizer, epoch, cid, config, p_images_group=None, p_labels_group=None, global_model=None):
     """one epoch training"""
     losses = AverageMeter()
-    
+    if args.cfg.theoretical_bound == 1:
+        batch_grads = []
     
     for idx, (images, labels) in enumerate(train_loader):
         
@@ -159,7 +184,7 @@ def train_baseline(args, train_loader, model, criterion, optimizer, epoch, cid, 
             if idx < len(p_labels_group):
                 p_images, p_labels = p_images_group[idx], p_labels_group[idx]
                 p_images, p_labels = p_images.to(args.device), p_labels.to(args.device)
-                p_features = model.get_img_feat(p_images)
+                p_features = model(p_images)
                 p_loss = criterion(p_features, p_labels)
                 p_loss_num = p_labels.shape[0]
                 
@@ -171,8 +196,20 @@ def train_baseline(args, train_loader, model, criterion, optimizer, epoch, cid, 
         # SGD
         optimizer.zero_grad()
         loss.backward()
+
+        if args.cfg.theoretical_bound == 1:
+            grads = []
+            for param in model.parameters():
+                if param.grad is not None:
+                    grads.append(param.grad.view(-1)/bsz)  # 展平梯度并存储
+            batch_grads.append(torch.cat(grads))  # 将所有参数的梯度连接起来
+
         optimizer.step()
 
+    if args.cfg.theoretical_bound == 1:
+        batch_grads = torch.stack(batch_grads)
+        return losses.avg, batch_grads
+        
     return losses.avg
 
 
@@ -211,7 +248,7 @@ class AverageMeter(object):
 
     def update(self, val, n=1):
         self.val = val
-        self.sum += val * n
+        self.sum += val
         self.count += n
         self.avg = self.sum / self.count
 

@@ -1,18 +1,21 @@
-logfile_info: '1227-PathMNIST_20Clients_Alpha0.1_LR0.001_NoBefore'
-wandb_project: '20231227EMNIST'
+
 num_clients: 20
+select_client_num: 15
 wandb: 1
 
-dirichlet_alpha: 0.1
-local_lr: 0.001
 
-client_dataset: 'emnist'  
+client_dataset: 'cifar100'  
 
 # client_dataset: 'PathMNIST'
 
 # client_dataset: 'cifar100'
 
 
-use_before_fc_emb: 0
+gene_num: 5000
+model_name: 'ViT-B/32'  # ViT-B32-timm, ViT-B/32
 
+meaningful_anchor: 1
+gpt3_anchor: 'no' # ensembel_prompt, one_prompt, no, description, description_dim3072
 
+local_epoch: 100
+round: 40
